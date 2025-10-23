@@ -33,17 +33,22 @@ const allocateTenant = async (req, res) => {
         }
 
         // Check if tenant exists
-        const tenantUser = await prisma.user.findUnique({
-            where: { id: tenant }
+        const tenantExists = await prisma.tenant.findUnique({
+            where: { id: parseInt(tenant) }
         });
         
-        if (!tenantUser) {
+        if (!tenantExists) {
             return errorResponse(res, "Tenant not found", 404);
+        }
+
+        // Check if tenant status is active
+        if (tenantExists.status !== 'active') {
+            return errorResponse(res, `Tenant is ${tenantExists.status}, cannot allocate`, 400);
         }
 
         // Check if bed exists and is available
         const bedData = await prisma.bed.findUnique({
-            where: { id: bed }
+            where: { id: parseInt(bed) }
         });
         
         if (!bedData) {
@@ -54,15 +59,15 @@ const allocateTenant = async (req, res) => {
             return errorResponse(res, `Bed is ${bedData.status}, cannot allocate`, 400);
         }
 
-        // Check if tenant already has an active bed (through currentTenantId)
-        const existingBed = await prisma.bed.findFirst({
+        // Check if tenant already has an active allocation
+        const existingAllocation = await prisma.allocation.findFirst({
             where: {
-                currentTenantId: tenant,
-                status: 'occupied'
+                tenantId: parseInt(tenant),
+                status: 'active'
             }
         });
 
-        if (existingBed) {
+        if (existingAllocation) {
             return errorResponse(
                 res,
                 "Tenant already has an active allocation. Please check out from current bed first.",
@@ -72,14 +77,15 @@ const allocateTenant = async (req, res) => {
 
         // Use transaction to ensure data consistency
         const allocation = await prisma.$transaction(async (tx) => {
-            // Create allocation
+            // Create allocation using relation connect
             const newAllocation = await tx.allocation.create({
                 data: {
-                    hostelId: hostel,
-                    floorId: floor,
-                    roomId: room,
-                    bedId: bed,
-                    allocatedById: req.userId,
+                    hostel: { connect: { id: parseInt(hostel) } },
+                    floor: { connect: { id: parseInt(floor) } },
+                    room: { connect: { id: parseInt(room) } },
+                    bed: { connect: { id: parseInt(bed) } },
+                    tenant: { connect: { id: parseInt(tenant) } },
+                    allocatedBy: { connect: { id: req.userId } },
                     checkInDate: new Date(checkInDate),
                     expectedCheckOutDate: expectedCheckOutDate ? new Date(expectedCheckOutDate) : null,
                     rentAmount,
@@ -88,18 +94,18 @@ const allocateTenant = async (req, res) => {
                 }
             });
 
-            // Update bed status and tenant
+            // Update bed status (note: currentTenantId still uses User model for backward compatibility)
             await tx.bed.update({
-                where: { id: bed },
+                where: { id: parseInt(bed) },
                 data: {
-                    status: 'occupied',
-                    currentTenantId: tenant
+                    status: 'occupied'
+                    // currentTenantId removed - we now use Allocation to track tenants
                 }
             });
 
             // Update room occupied beds count
             await tx.room.update({
-                where: { id: room },
+                where: { id: parseInt(room) },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -107,7 +113,7 @@ const allocateTenant = async (req, res) => {
 
             // Update floor occupied beds count
             await tx.floor.update({
-                where: { id: floor },
+                where: { id: parseInt(floor) },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -115,7 +121,7 @@ const allocateTenant = async (req, res) => {
 
             // Update hostel occupied beds count
             await tx.hostel.update({
-                where: { id: hostel },
+                where: { id: parseInt(hostel) },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -123,12 +129,12 @@ const allocateTenant = async (req, res) => {
 
             // Check and update room status if fully occupied
             const roomData = await tx.room.findUnique({
-                where: { id: room }
+                where: { id: parseInt(room) }
             });
             
             if (roomData.occupiedBeds >= roomData.totalBeds) {
                 await tx.room.update({
-                    where: { id: room },
+                    where: { id: parseInt(room) },
                     data: { status: 'occupied' }
                 });
             }
@@ -136,7 +142,7 @@ const allocateTenant = async (req, res) => {
             return newAllocation;
         });
 
-        // Fetch populated allocation with tenant info through bed
+        // Fetch populated allocation with tenant info
         const populatedAllocation = await prisma.allocation.findUnique({
             where: { id: allocation.id },
             include: {
@@ -145,11 +151,11 @@ const allocateTenant = async (req, res) => {
                 room: { select: { roomNumber: true } },
                 bed: { 
                     select: { 
-                        bedNumber: true,
-                        currentTenant: { 
-                            select: { name: true, email: true, phone: true } 
-                        }
+                        bedNumber: true
                     } 
+                },
+                tenant: {
+                    select: { name: true, email: true, phone: true }
                 },
                 allocatedBy: { select: { name: true, email: true } }
             }
@@ -171,7 +177,7 @@ const checkOutTenant = async (req, res) => {
         const { checkOutDate, notes } = req.body;
 
         const allocation = await prisma.allocation.findUnique({
-            where: { id: allocationId }
+            where: { id: parseInt(allocationId) }
         });
         
         if (!allocation) {
@@ -186,7 +192,7 @@ const checkOutTenant = async (req, res) => {
         await prisma.$transaction(async (tx) => {
             // Update allocation
             await tx.allocation.update({
-                where: { id: allocationId },
+                where: { id: parseInt(allocationId) },
                 data: {
                     status: 'checked_out',
                     checkOutDate: checkOutDate ? new Date(checkOutDate) : new Date(),
@@ -196,30 +202,30 @@ const checkOutTenant = async (req, res) => {
 
             // Update bed
             await tx.bed.update({
-                where: { id: allocation.bedId },
+                where: { id: parseInt(allocation.bedId) },
                 data: {
-                    status: 'available',
-                    currentTenantId: null
+                    status: 'available'
+                    // currentTenantId removed - we now use Allocation to track tenants
                 }
             });
 
             // Update counts
             await tx.room.update({
-                where: { id: allocation.roomId },
+                where: { id: parseInt(allocation.roomId) },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
             });
 
             await tx.floor.update({
-                where: { id: allocation.floorId },
+                where: { id: parseInt(allocation.floorId) },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
             });
 
             await tx.hostel.update({
-                where: { id: allocation.hostelId },
+                where: { id: parseInt(allocation.hostelId) },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
@@ -227,24 +233,24 @@ const checkOutTenant = async (req, res) => {
 
             // Update room status
             const roomData = await tx.room.findUnique({
-                where: { id: allocation.roomId }
+                where: { id: parseInt(allocation.roomId) }
             });
             
             if (roomData.occupiedBeds === 0) {
                 await tx.room.update({
-                    where: { id: allocation.roomId },
+                    where: { id: parseInt(allocation.roomId) },
                     data: { status: 'vacant' }
                 });
             } else if (roomData.occupiedBeds < roomData.totalBeds) {
                 await tx.room.update({
-                    where: { id: allocation.roomId },
+                    where: { id: parseInt(allocation.roomId) },
                     data: { status: 'occupied' }
                 });
             }
         });
 
         const populatedAllocation = await prisma.allocation.findUnique({
-            where: { id: allocationId },
+            where: { id: parseInt(allocationId) },
             include: {
                 bed: { select: { bedNumber: true } },
                 room: { select: { roomNumber: true } }
@@ -271,7 +277,7 @@ const transferTenant = async (req, res) => {
         }
 
         const allocation = await prisma.allocation.findUnique({
-            where: { id: allocationId }
+            where: { id: parseInt(allocationId) }
         });
         
         if (!allocation) {
@@ -284,10 +290,13 @@ const transferTenant = async (req, res) => {
 
         // Check if new bed is available
         const newBed = await prisma.bed.findUnique({
-            where: { id: newBedId },
+            where: { id: parseInt(newBedId) },
             include: {
-                room: true,
-                floor: true
+                room: {
+                    include: {
+                        floor: true
+                    },
+                }
             }
         });
         
@@ -299,21 +308,17 @@ const transferTenant = async (req, res) => {
             return errorResponse(res, "New bed is not available", 400);
         }
 
-        const oldBedId = allocation.bedId;
-        const oldRoomId = allocation.roomId;
+        const oldBedId = parseInt(allocation.bedId);
+        const oldRoomId = parseInt(allocation.roomId);
 
-        // Get the old bed to retrieve current tenant
-        const oldBed = await prisma.bed.findUnique({
-            where: { id: oldBedId }
-        });
-
-        const tenantId = oldBed.currentTenantId;
+        // Get tenant ID from allocation
+        const tenantId = parseInt(allocation.tenantId);
 
         // Use transaction for consistency
         await prisma.$transaction(async (tx) => {
             // Get current transfer history
             const currentAllocation = await tx.allocation.findUnique({
-                where: { id: allocationId }
+                where: { id: parseInt(allocationId) }
             });
 
             // Add new transfer record to history
@@ -330,11 +335,11 @@ const transferTenant = async (req, res) => {
 
             // Update allocation with new bed info
             await tx.allocation.update({
-                where: { id: allocationId },
+                where: { id: parseInt(allocationId) },
                 data: {
                     bedId: newBedId,
                     roomId: newBed.roomId,
-                    floorId: newBed.floorId,
+                    floorId: newBed.room.floorId,
                     transferHistory: updatedHistory
                 }
             });
@@ -343,8 +348,7 @@ const transferTenant = async (req, res) => {
             await tx.bed.update({
                 where: { id: oldBedId },
                 data: {
-                    status: 'available',
-                    currentTenantId: null
+                    status: 'available'
                 }
             });
 
@@ -352,8 +356,7 @@ const transferTenant = async (req, res) => {
             await tx.bed.update({
                 where: { id: newBedId },
                 data: {
-                    status: 'occupied',
-                    currentTenantId: tenantId
+                    status: 'occupied'
                 }
             });
 
@@ -375,15 +378,15 @@ const transferTenant = async (req, res) => {
         });
 
         const populatedAllocation = await prisma.allocation.findUnique({
-            where: { id: allocationId },
+            where: { id: parseInt(allocationId) },
             include: {
                 bed: { 
                     select: { 
-                        bedNumber: true,
-                        currentTenant: { 
-                            select: { name: true, email: true, phone: true } 
-                        }
+                        bedNumber: true
                     } 
+                },
+                tenant: {
+                    select: { name: true, email: true, phone: true }
                 },
                 room: { select: { roomNumber: true } },
                 floor: { select: { floorNumber: true } }
@@ -420,11 +423,11 @@ const getAllAllocations = async (req, res) => {
                     room: { select: { roomNumber: true } },
                     bed: { 
                         select: { 
-                            bedNumber: true,
-                            currentTenant: { 
-                                select: { name: true, email: true, phone: true } 
-                            }
+                            bedNumber: true
                         } 
+                    },
+                    tenant: {
+                        select: { name: true, email: true, phone: true }
                     },
                     allocatedBy: { select: { name: true } }
                 },
@@ -456,9 +459,9 @@ const getAllAllocations = async (req, res) => {
 const getAllocationById = async (req, res) => {
     try {
         const { id } = req.params;
-
+        const allocationId = parseInt(id);
         const allocation = await prisma.allocation.findUnique({
-            where: { id },
+            where: { id: allocationId },
             include: {
                 hostel: { select: { name: true, address: true } },
                 floor: { select: { floorNumber: true } },
@@ -516,6 +519,7 @@ const getActiveAllocationsByHostel = async (req, res) => {
 const updateAllocation = async (req, res) => {
     try {
         const { id } = req.params;
+        const allocationId = parseInt(id);
         const updates = req.body;
 
         // Remove fields that shouldn't be updated directly
@@ -543,7 +547,7 @@ const updateAllocation = async (req, res) => {
         if (updates.documents) updateData.documents = updates.documents;
 
         const allocation = await prisma.allocation.update({
-            where: { id },
+            where: { id: allocationId },
             data: updateData,
             include: {
                 tenant: { select: { name: true, email: true } },

@@ -96,6 +96,72 @@ enum PaymentStatus {
   overdue
 }
 
+enum PaymentMethod {
+  cash
+  card
+  bank_transfer
+  upi
+  cheque
+  online
+}
+
+enum PaymentType {
+  rent
+  deposit
+  maintenance
+  electricity
+  water
+  other
+}
+
+enum TenantStatus {
+  active
+  inactive
+  blacklisted
+}
+
+enum Gender {
+  male
+  female
+  other
+}
+
+enum EmployeeStatus {
+  active
+  inactive
+  on_leave
+  terminated
+}
+
+enum EmployeeRole {
+  staff
+  manager
+}
+
+enum TransactionStatus {
+  pending
+  processing
+  completed
+  failed
+  cancelled
+  refunded
+}
+
+enum BookingType {
+  online
+  walkin
+  admin
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  checked_in
+  checked_out
+  cancelled
+  expired
+}
+
 // =================== MODELS ===================
 
 model User {
@@ -110,10 +176,14 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  managedHostels Hostel[]     @relation("HostelManager")
-  allocatedBy    Allocation[] @relation("AllocationCreator")
-  currentBeds    Bed[]        @relation("CurrentTenant")
-  reservedBeds   Bed[]        @relation("BedReservation")
+  managedHostels     Hostel[]     @relation("HostelManager")
+  tenantProfile      Tenant?      @relation("TenantUser")           // If user is also a tenant (online registration)
+  allocatedBy        Allocation[] @relation("AllocationCreator")    // Allocations created by this user (admin/staff)
+  currentBeds        Bed[]        @relation("CurrentTenant")
+  reservedBeds       Bed[]        @relation("BedReservation")
+  paymentsCollected  Payment[]    @relation("PaymentCollector")     // Payments collected by this user
+  employeeProfile    Employee?    @relation("EmployeeUser")         // If user is an employee (staff/manager)
+  createdBookings    Booking[]    @relation("BookingCreator")       // Bookings created by this user
 
   @@index([email])
   @@index([role])
@@ -138,10 +208,13 @@ model Hostel {
   updatedAt      DateTime     @updatedAt
 
   // Relations
-  manager     User?        @relation("HostelManager", fields: [managedBy], references: [id], onDelete: SetNull)
-  floors      Floor[]
-  rooms       Room[]
-  allocations Allocation[]
+  manager      User?         @relation("HostelManager", fields: [managedBy], references: [id], onDelete: SetNull)
+  floors       Floor[]
+  rooms        Room[]
+  allocations  Allocation[]
+  payments     Payment[]
+  transactions Transaction[]
+  bookings     Booking[]
 
   @@index([name])
   @@index([status])
@@ -198,6 +271,7 @@ model Room {
   floor       Floor        @relation(fields: [floorId], references: [id], onDelete: Cascade)
   beds        Bed[]
   allocations Allocation[]
+  bookings    Booking[]
 
   @@unique([hostelId, roomNumber])
   @@index([status])
@@ -229,6 +303,7 @@ model Bed {
   currentTenant User?        @relation("CurrentTenant", fields: [currentTenantId], references: [id], onDelete: SetNull)
   reservedBy    User?        @relation("BedReservation", fields: [reservedById], references: [id], onDelete: SetNull)
   allocations   Allocation[]
+  bookings      Booking[]
 
   @@unique([roomId, bedNumber])
   @@index([status])
@@ -242,7 +317,8 @@ model Allocation {
   floorId              Int
   roomId               Int
   bedId                Int
-  allocatedById        Int
+  tenantId             Int              // The tenant/user being allocated
+  allocatedById        Int              // The admin/staff who created the allocation
   allocationDate       DateTime         @default(now())
   checkInDate          DateTime
   checkOutDate         DateTime?
@@ -258,19 +334,290 @@ model Allocation {
   updatedAt            DateTime         @updatedAt
 
   // Relations
-  hostel      Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  floor       Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  room        Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  bed         Bed    @relation(fields: [bedId], references: [id], onDelete: Cascade)
-  allocatedBy User   @relation("AllocationCreator", fields: [allocatedById], references: [id], onDelete: Cascade)
+  hostel      Hostel    @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor       Floor     @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  bed         Bed       @relation(fields: [bedId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation("TenantAllocations", fields: [tenantId], references: [id], onDelete: Cascade)
+  allocatedBy User      @relation("AllocationCreator", fields: [allocatedById], references: [id], onDelete: Cascade)
+  payments    Payment[] @relation("AllocationPayments")
 
   @@index([bedId, status])
   @@index([roomId, status])
   @@index([hostelId, status])
+  @@index([tenantId, status])
   @@index([allocationDate])
   @@index([hostelId])
   @@index([floorId])
   @@index([roomId])
   @@index([bedId])
+  @@index([tenantId])
   @@index([allocatedById])
+}
+
+model Tenant {
+  id                  Int          @id @default(autoincrement())
+  userId              Int?         @unique // Optional: Link to User account if registered online (one user = one tenant profile)
+  name                String       @db.VarChar(255)
+  email               String?      @unique @db.VarChar(255)
+  phone               String       @db.VarChar(50)
+  alternatePhone      String?      @db.VarChar(50)
+  gender              Gender?
+  dateOfBirth         DateTime?
+  cnicNumber          String?      @unique @db.VarChar(20)
+  address             Json?        // { street, city, state, country, pincode }
+  permanentAddress    Json?        // { street, city, state, country, pincode }
+  
+  // Emergency Contact
+  emergencyContact    Json?        // { name, relationship, phone, address }
+  
+  // Professional/Educational Info
+  occupation          String?      @db.VarChar(255)
+  companyName         String?      @db.VarChar(255)
+  designation         String?      @db.VarChar(255)
+  monthlyIncome       Float?       @db.Double
+  
+  // Identification Documents
+  documents           Json?        // Array of { type, number, url, uploadedAt }
+  profilePhoto        String?      @db.VarChar(500)
+  
+  // Status and Financial
+  status              TenantStatus @default(active)
+  totalPaid           Float        @default(0) @db.Double
+  totalDue            Float        @default(0) @db.Double
+  securityDeposit     Float        @default(0) @db.Double
+  
+  // Notes and Remarks
+  notes               String?      @db.Text
+  rating              Int?         @default(0)
+  
+  // Timestamps
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  
+  // Relations
+  user                User?        @relation("TenantUser", fields: [userId], references: [id], onDelete: SetNull)
+  allocations         Allocation[] @relation("TenantAllocations")
+  payments            Payment[]
+  transactions        Transaction[]
+  bookings            Booking[]
+  
+  @@index([email])
+  @@index([phone])
+  @@index([cnicNumber])
+  @@index([status])
+  @@index([name])
+  @@index([userId])
+}
+
+model Payment {
+  id              Int           @id @default(autoincrement())
+  tenantId        Int?
+  allocationId    Int?
+  bookingId       Int?
+  hostelId        Int?
+  
+  // Payment Details
+  amount          Float?        @db.Double
+  paymentType     PaymentType?
+  paymentMethod   PaymentMethod?
+  paymentDate     DateTime?     @default(now())
+  
+  // Period Info (for rent payments)
+  forMonth        String?       @db.VarChar(20)  // "2025-10" format
+  forPeriod       Json?         // { startDate, endDate }
+  
+  // Transaction Details
+  transactionId   String?       @db.VarChar(255)
+  receiptNumber   String?       @unique @db.VarChar(100)
+  
+  // Status
+  status          PaymentStatus? @default(paid)
+  
+  // Additional Info
+  remarks         String?       @db.Text
+  collectedBy     Int?          // User ID of staff who collected
+  
+  // Attachments
+  attachments     Json?         // Array of { name, url, uploadedAt }
+  
+  // Timestamps
+  createdAt       DateTime?     @default(now())
+  updatedAt       DateTime?     @updatedAt
+  
+  // Relations
+  tenant          Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  allocation      Allocation?   @relation("AllocationPayments", fields: [allocationId], references: [id], onDelete: SetNull)
+  booking         Booking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  hostel          Hostel?       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  collector       User?         @relation("PaymentCollector", fields: [collectedBy], references: [id], onDelete: SetNull)
+  transactions    Transaction[]
+  
+  @@index([tenantId])
+  @@index([allocationId])
+  @@index([bookingId])
+  @@index([hostelId])
+  @@index([paymentDate])
+  @@index([forMonth])
+  @@index([status])
+  @@index([paymentType])
+}
+
+model Employee {
+  id              Int            @id @default(autoincrement())
+  userId          Int            @unique // Link to User account
+  
+  // Employee Details
+  employeeCode    String?        @unique @db.VarChar(50)
+  role            EmployeeRole   @default(staff)
+  department      String?        @db.VarChar(100)
+  designation     String?        @db.VarChar(100)
+  
+  // Salary Information
+  salary          Float          @db.Double
+  salaryType      String?        @default("monthly") @db.VarChar(20) // monthly, hourly, daily
+  
+  // Employment Details
+  joinDate        DateTime
+  terminationDate DateTime?
+  status          EmployeeStatus @default(active)
+  
+  // Work Information
+  workingHours    Json?          // { startTime, endTime, workingDays: ["monday", "tuesday", ...] }
+  hostelAssigned  Int?           // Hostel ID if assigned to specific hostel
+  
+  // Bank Details
+  bankDetails     Json?          // { bankName, accountNumber, ifscCode, branch }
+  
+  // Address
+  address         Json?          // { street, city, state, country, pincode }
+  
+  // Documents
+  documents       Json?          // Array of { type, number, url, uploadedAt }
+  profilePhoto    String?        @db.VarChar(500)
+  
+  // Additional Info
+  emergencyContact Json?         // { name, relationship, phone, address }
+  qualifications   Json?         // Array of { degree, institution, year }
+  notes            String?       @db.Text
+  
+  // Timestamps
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  // Relations
+  user            User           @relation("EmployeeUser", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([employeeCode])
+  @@index([role])
+  @@index([status])
+  @@index([hostelAssigned])
+}
+
+model Transaction {
+  id               Int               @id @default(autoincrement())
+  paymentId        Int?              // Link to Payment
+  tenantId         Int?
+  hostelId         Int?
+  
+  // Gateway Info
+  gateway          String?           @db.VarChar(50)  // e.g. "Stripe", "JazzCash", "PayFast"
+  transactionType  String?           @db.VarChar(30)  // e.g. "rent", "deposit", "refund"
+  
+  // Amounts
+  amount           Float?            @db.Double
+  currency         String?           @default("PKR") @db.VarChar(10)
+  fee              Float?            @default(0) @db.Double  // Platform or gateway fee
+  
+  // IDs from Payment Gateway
+  gatewayRef       String?           @db.VarChar(255) // e.g. Stripe session/payment_intent id
+  orderId          String?           @db.VarChar(255)
+  merchantTxnId    String?           @db.VarChar(255)
+  
+  // Status & Response
+  status           TransactionStatus? @default(pending)
+  responseCode     String?           @db.VarChar(100)
+  responseMessage  String?           @db.VarChar(500)
+  rawResponse      Json?             // Full response from gateway for debugging
+  
+  // Payment Method
+  paymentMethod    PaymentMethod?    // Same enum as Payment (cash, card, bank_transfer, etc.)
+  
+  // IP & Device Info (optional for audit)
+  ipAddress        String?           @db.VarChar(100)
+  userAgent        String?           @db.VarChar(500)
+  
+  // Timestamps
+  createdAt        DateTime?         @default(now())
+  updatedAt        DateTime?         @updatedAt
+
+  // Relations
+  payment          Payment?          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  tenant           Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  hostel           Hostel?           @relation(fields: [hostelId], references: [id], onDelete: SetNull)
+
+  @@index([paymentId])
+  @@index([tenantId])
+  @@index([hostelId])
+  @@index([gateway])
+  @@index([status])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+model Booking {
+  id              Int           @id @default(autoincrement())
+  bookingCode     String?       @unique @db.VarChar(50)
+  tenantId        Int?
+  hostelId        Int?
+  roomId          Int?
+  bedId           Int?
+  
+  // Dates
+  checkInDate     DateTime?
+  checkOutDate    DateTime?
+  bookingDate     DateTime?     @default(now())
+
+  // Booking Info
+  bookingType     BookingType?  @default(online)
+  status          BookingStatus? @default(pending)
+  numberOfGuests  Int?          @default(1)
+  remarks         String?       @db.Text
+
+  // Payment Info
+  totalAmount     Float?        @db.Double
+  advancePaid     Float?        @default(0) @db.Double
+  paymentStatus   PaymentStatus? @default(pending)
+  paymentMethod   PaymentMethod?
+  transactionId   String?       @db.VarChar(255)
+  
+  // Customer Info (for walk-in bookings without tenant account)
+  customerName    String?       @db.VarChar(255)
+  customerEmail   String?       @db.VarChar(255)
+  customerPhone   String?       @db.VarChar(50)
+  customerCnic    String?       @db.VarChar(20)
+  
+  // Booking created/managed by
+  createdBy       Int?
+  
+  // Relations
+  tenant          Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  hostel          Hostel?       @relation(fields: [hostelId], references: [id], onDelete: SetNull)
+  room            Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  bed             Bed?          @relation(fields: [bedId], references: [id], onDelete: SetNull)
+  creator         User?         @relation("BookingCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  payments        Payment[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([tenantId])
+  @@index([hostelId])
+  @@index([roomId])
+  @@index([bedId])
+  @@index([status])
+  @@index([bookingDate])
+  @@index([checkInDate])
+  @@index([bookingCode])
 }

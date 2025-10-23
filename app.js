@@ -11,6 +11,11 @@ const roomRoute = require('./routes/api/admin/room.route');
 const userRoomRoute = require('./routes/api/user/room.route');
 const bedRoute = require('./routes/api/admin/bed.route');
 const allocationRoute = require('./routes/api/admin/allocation.route');
+const tenantRoute = require('./routes/api/admin/tenant.route');
+const paymentRoute = require('./routes/api/admin/payment.route');
+const employeeRoute = require('./routes/api/admin/employee.route');
+const transactionRoute = require('./routes/api/admin/transaction.route');
+const bookingRoute = require('./routes/api/admin/booking.route');
 // Load environment variables
 dotenv.config();
 
@@ -23,6 +28,8 @@ app.use(cookieParser()); // Parse cookies
 
 // Database connection
 dbConnection();
+
+app.use('/uploads', express.static('uploads'));
 
 // Routes
 // website routes
@@ -39,6 +46,11 @@ app.use('/api/admin', floorRoute);
 app.use('/api/admin', roomRoute);
 app.use('/api/admin', bedRoute);
 app.use('/api/admin', allocationRoute);
+app.use('/api/admin', tenantRoute);
+app.use('/api/admin', paymentRoute);
+app.use('/api/admin', employeeRoute);
+app.use('/api/admin', transactionRoute);
+app.use('/api/admin', bookingRoute);
 
 // Start server
 const PORT = process.env.PORT || 3000;
