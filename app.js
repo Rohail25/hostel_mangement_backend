@@ -30,6 +30,7 @@ const campaignRoute = require("./routes/api/admin/campaign.route");
 const settingRoute = require("./routes/api/admin/setting.route");
 const { set } = require("mongoose");
 const peopleRoute = require("./routes/api/admin/people.route");
+const accountsRoute = require("./routes/api/admin/accounts.route");
 
 // Load environment variables
 dotenv.config();
@@ -89,6 +90,7 @@ app.use("/api/admin", fpaRoute);
 app.use("/api/admin", campaignRoute);
 app.use("/api/admin", settingRoute);
 app.use("/api/admin", peopleRoute);
+app.use("/api/admin", accountsRoute);
 
 // Start server
 const PORT = process.env.PORT || 3000;
