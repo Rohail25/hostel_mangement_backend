@@ -4,7 +4,7 @@ const cookieParser = require("cookie-parser");
 const { dbConnection } = require("./config/db");
 
 const userRoute = require("./routes/api/admin/user.route");
-const hostelRoute = require("./routes/api/admin/hostel.route");
+const hostelRoute = require("./routes/api/dashboard/hostelManagement.route");
 const userHostelRoute = require("./routes/api/user/hostel.route");
 const floorRoute = require("./routes/api/admin/floor.route");
 const userFloorRoute = require("./routes/api/user/floor.route");
@@ -23,15 +23,17 @@ const userTransactionRoute = require("./routes/api/user/transaction.route");
 const dashboardRoute = require("./routes/api/admin/dashboard.route");
 const overviewRoute = require("./routes/api/admin/overview.route");
 const tableRoute = require("./routes/api/admin/table.route");
-const alertRoute = require("./routes/api/admin/alert.route");
+const alertRoute = require("./routes/api/dashboard/alerts.route");
 const vendorRoute = require("./routes/api/admin/vendor.route");
 const fpaRoute = require("./routes/api/admin/fpa.route");
 const campaignRoute = require("./routes/api/admin/campaign.route");
 const settingRoute = require("./routes/api/admin/setting.route");
 const { set } = require("mongoose");
-const peopleRoute = require("./routes/api/admin/people.route");
-const accountsRoute = require("./routes/api/admin/accounts.route");
-const hostelRoute = require("./routes/api/user/hostel.route");
+const peopleRoute = require("./routes/api/dashboard/people.route");
+const accountsRoute = require("./routes/api/dashboard/accounts.route");
+const hostelmanagementRoute = require("./routes/api/dashboard/hostelManagement.route");
+const alertmanagementRoute = require("./routes/api/dashboard/alerts.route");
+
 
 // Load environment variables
 dotenv.config();
@@ -92,7 +94,9 @@ app.use("/api/admin", campaignRoute);
 app.use("/api/admin", settingRoute);
 app.use("/api/admin", peopleRoute);
 app.use("/api/admin", accountsRoute);
-app.use("/api/admin", hostelRoute);
+app.use("/api/admin", hostelmanagementRoute);
+app.use("/api/admin", alertmanagementRoute);
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -10,8 +10,9 @@ const {
     getHostelById,
     updateHostel,
     deleteHostel,
-    getHostelStats
-} = require('../../../controllers/api/hostel.controller');
+    getHostelStats,
+    getHostelArchitecture,
+} = require('../../../controllers/api/hostel/hostel.controller');
 const { authenticate, authorize } = require('../../../middleware/auth.middleware');
 
 // All routes require authentication and admin/manager role
@@ -27,6 +28,9 @@ router.get('/hostel/:id', authenticate, authorize('admin', 'manager'), getHostel
 
 // Get hostel statistics (Admin & Manager only)
 router.get('/hostel/:id/stats', authenticate, authorize('admin', 'manager'), getHostelStats);
+
+// Get hostel architecture (floors, rooms, beds) (Admin & Manager only)
+router.get('/hostel/:id/architecture', authenticate, authorize('admin', 'manager'), getHostelArchitecture);
 
 // Update hostel (Admin & Manager only)
 router.put('/hostel/:id', authenticate, authorize('admin', 'manager'), updateHostel);

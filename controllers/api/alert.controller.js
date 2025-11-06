@@ -600,4 +600,3 @@ module.exports = {
     getAlertStats,
     getOverdueAlerts
 };
-
