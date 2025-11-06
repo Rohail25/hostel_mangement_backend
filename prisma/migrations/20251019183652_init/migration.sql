@@ -1,7 +1,7 @@
 -- CreateTable
 CREATE TABLE `User` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `name` VARCHAR(255) NULL,
+    `username` VARCHAR(255) NULL,
     `email` VARCHAR(255) NULL,
     `phone` VARCHAR(50) NULL,
     `password` VARCHAR(255) NULL,

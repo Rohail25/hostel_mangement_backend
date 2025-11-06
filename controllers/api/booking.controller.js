@@ -10,21 +10,31 @@ const generateBookingCode = async () => {
     const year = date.getFullYear().toString().slice(-2);
     const month = String(date.getMonth() + 1).padStart(2, '0');
     
-    // Get the count of bookings today
-    const startOfDay = new Date(date.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(date.setHours(23, 59, 59, 999));
+    // Get the count of all bookings for this month (not just today)
+    const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
     
-    const count = await prisma.booking.count({
-        where: {
-            createdAt: {
-                gte: startOfDay,
-                lte: endOfDay
-            }
+    let sequence = 1;
+    let bookingCode = '';
+    let isUnique = false;
+    
+    // Loop until we find a unique code
+    while (!isUnique) {
+        bookingCode = `${prefix}${year}${month}${String(sequence).padStart(4, '0')}`;
+        
+        // Check if this code already exists
+        const existingBooking = await prisma.booking.findUnique({
+            where: { bookingCode: bookingCode }
+        });
+        
+        if (!existingBooking) {
+            isUnique = true;
+        } else {
+            sequence++;
         }
-    });
+    }
     
-    const sequence = String(count + 1).padStart(4, '0');
-    return `${prefix}${year}${month}${sequence}`;
+    return bookingCode;
 };
 
 // ===================================
@@ -154,7 +164,7 @@ const createBooking = async (req, res) => {
         // Create booking
         const booking = await prisma.booking.create({
             data: {
-                bookingCode,
+                bookingCode: bookingCode || null,
                 tenantId: tenantId ? parseInt(tenantId) : null,
                 hostelId: parseInt(hostelId),
                 roomId: roomId ? parseInt(roomId) : null,

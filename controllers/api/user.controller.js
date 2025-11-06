@@ -8,10 +8,10 @@ const { prisma } = require('../../config/db');
 // ===================================
 const registerUser = async (req, res) => {
     try {
-        const { name, email, phone, password } = req.body;
+        const { username, email, phone, password } = req.body;
 
         // Validation
-        if (!name || !email || !phone || !password) {
+        if (!username || !email || !phone || !password) {
             return errorResponse(res, "All fields are required", 400);
         }
 
@@ -41,7 +41,7 @@ const registerUser = async (req, res) => {
         // Create user
         const user = await prisma.user.create({
             data: {
-                name,
+                username,
                 email,
                 phone,
                 password: hashedPassword,
@@ -52,7 +52,7 @@ const registerUser = async (req, res) => {
         // Return user without password
         const userResponse = {
             id: user.id,
-            name: user.name,
+            username: user.name,
             email: user.email,
             phone: user.phone,
             role: user.role,
@@ -115,7 +115,7 @@ const loginUser = async (req, res) => {
         // Return user data without password
         const userData = {
             id: user.id,
-            name: user.name,
+            username: user.name,
             email: user.email,
             phone: user.phone,
             role: user.role,
@@ -139,7 +139,7 @@ const getAllUsers = async (req, res) => {
         const users = await prisma.user.findMany({
             select: {
                 id: true,
-                name: true,
+                username: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -174,7 +174,7 @@ const getUserById = async (req, res) => {
             where: { id: userId },
             select: {
                 id: true,
-                name: true,
+                username: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -262,7 +262,7 @@ const updateUser = async (req, res) => {
             data: updateData,
             select: {
                 id: true,
-                name: true,
+                username: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -340,7 +340,7 @@ const softDeleteUser = async (req, res) => {
             data: { status: 'inactive' },
             select: {
                 id: true,
-                name: true,
+                username: true,
                 email: true,
                 status: true
             }

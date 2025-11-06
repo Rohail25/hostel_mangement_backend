@@ -11,18 +11,24 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "prisma": "^6.17.1"
+    "prisma": "^6.18.0"
   },
   "dependencies": {
-    "@prisma/client": "^6.17.1",
+    "@prisma/client": "^6.18.0",
     "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-router": "^0.0.1",
+    "ioredis": "^5.8.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.19.1",
     "multer": "^2.0.2",
-    "nodemon": "^3.1.10"
+    "nodemailer": "^7.0.10",
+    "nodemon": "^3.1.10",
+    "pdfkit": "^0.17.2",
+    "stripe": "^19.1.0",
+    "twilio": "^5.10.4"
   }
 }

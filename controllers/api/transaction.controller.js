@@ -1,9 +1,68 @@
 const { PrismaClient } = require('@prisma/client');
+const { successResponse, errorResponse } = require('../../Helper/helper');
 const prisma = new PrismaClient();
 
+/**
+ * =====================================================
+ * TRANSACTION CONTROLLER - Refactored Flow
+ * =====================================================
+ * 
+ * Transaction Types (transactionType field):
+ * 
+ * RECEIVABLE (Money Coming In - Positive):
+ * - rent_received
+ * - deposit_received
+ * - advance_received
+ * - dues_received
+ * - other_received
+ * 
+ * PAYABLE (Money Going Out - Negative):
+ * - salary_paid
+ * - vendor_paid
+ * - maintenance_paid
+ * - utility_paid
+ * - refund_paid
+ * - other_paid
+ * 
+ * This ensures clear distinction between money in vs money out.
+ */
+
+// =================== HELPER FUNCTIONS ===================
+
+/**
+ * Determine if transaction is Receivable or Payable based on type
+ */
+const getTransactionCategory = (transactionType) => {
+    const receivableTypes = [
+        'rent_received', 'rent', 'deposit_received', 'deposit',
+        'advance_received', 'advance', 'dues_received', 'other_received'
+    ];
+    const payableTypes = [
+        'salary_paid', 'vendor_paid', 'maintenance_paid', 
+        'utility_paid', 'refund_paid', 'other_paid', 'refund'
+    ];
+    
+    const type = transactionType?.toLowerCase();
+    
+    if (receivableTypes.some(t => type?.includes(t))) {
+        return 'receivable';
+    } else if (payableTypes.some(t => type?.includes(t))) {
+        return 'payable';
+    }
+    
+    return 'other';
+};
+
+/**
+ * Calculate signed amount based on category
+ * Receivable: positive, Payable: negative
+ */
+const getSignedAmount = (amount, category) => {
+    const absAmount = Math.abs(parseFloat(amount));
+    return category === 'payable' ? -absAmount : absAmount;
+};
+
 // =================== CREATE TRANSACTION ===================
-// NOTE: Transactions are automatically created when payments are recorded with status 'paid'
-// This endpoint is mainly for creating transactions for external payment gateways or special cases
 exports.createTransaction = async (req, res) => {
     try {
         const {
@@ -28,32 +87,31 @@ exports.createTransaction = async (req, res) => {
         } = req.body;
 
         // Validation
-        if (!paymentId || !gateway || !transactionType || !amount || !paymentMethod) {
-            return res.status(400).json({
-                success: false,
-                message: 'Payment ID, gateway, transaction type, amount, and payment method are required'
-            });
+        if (!transactionType || !amount) {
+            return errorResponse(res, 'Transaction type and amount are required', 400);
         }
 
-        // Verify payment exists
-        const payment = await prisma.payment.findUnique({
-            where: { id: parseInt(paymentId) }
-        });
-
-        if (!payment) {
-            return res.status(404).json({
-                success: false,
-                message: 'Payment not found'
+        // Verify payment exists if paymentId provided
+        if (paymentId) {
+            const payment = await prisma.payment.findUnique({
+                where: { id: parseInt(paymentId) }
             });
+
+            if (!payment) {
+                return errorResponse(res, 'Payment not found', 404);
+            }
         }
+
+        // Determine category (receivable/payable)
+        const category = getTransactionCategory(transactionType);
 
         // Create transaction
         const transaction = await prisma.transaction.create({
             data: {
-                paymentId: parseInt(paymentId),
-                tenantId: tenantId ? parseInt(tenantId) : payment.tenantId,
-                hostelId: hostelId ? parseInt(hostelId) : payment.hostelId,
-                gateway,
+                paymentId: paymentId ? parseInt(paymentId) : null,
+                tenantId: tenantId ? parseInt(tenantId) : null,
+                hostelId: hostelId ? parseInt(hostelId) : null,
+                gateway: gateway || 'manual',
                 transactionType,
                 amount: parseFloat(amount),
                 currency: currency || 'PKR',
@@ -61,11 +119,11 @@ exports.createTransaction = async (req, res) => {
                 gatewayRef,
                 orderId,
                 merchantTxnId,
-                status: status || 'pending',
+                status: status || 'completed',
                 responseCode,
                 responseMessage,
                 rawResponse,
-                paymentMethod,
+                paymentMethod: paymentMethod || 'cash',
                 ipAddress,
                 userAgent
             },
@@ -99,29 +157,29 @@ exports.createTransaction = async (req, res) => {
             }
         });
 
-        res.status(201).json({
-            success: true,
-            message: 'Transaction created successfully',
-            data: transaction
-        });
+        // Add category to response
+        const responseData = {
+            ...transaction,
+            category,
+            signedAmount: getSignedAmount(transaction.amount, category)
+        };
+
+        return successResponse(res, responseData, 'Transaction created successfully', 201);
 
     } catch (error) {
         console.error('Create transaction error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to create transaction',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to create transaction', 500);
     }
 };
 
-// =================== GET ALL TRANSACTIONS ===================
+// =================== GET ALL TRANSACTIONS WITH RECEIVABLE/PAYABLE ===================
 exports.getAllTransactions = async (req, res) => {
     try {
         const {
             status,
             gateway,
             transactionType,
+            category, // New: filter by receivable/payable
             paymentMethod,
             tenantId,
             hostelId,
@@ -205,25 +263,34 @@ exports.getAllTransactions = async (req, res) => {
             prisma.transaction.count({ where })
         ]);
 
-        res.status(200).json({
-            success: true,
-            message: 'Transactions fetched successfully',
-            data: transactions,
+        // Add category and signed amount to each transaction
+        const enrichedTransactions = transactions.map(t => {
+            const transactionCategory = getTransactionCategory(t.transactionType);
+            return {
+                ...t,
+                category: transactionCategory,
+                signedAmount: getSignedAmount(t.amount, transactionCategory)
+            };
+        });
+
+        // Filter by category if specified
+        const filteredTransactions = category 
+            ? enrichedTransactions.filter(t => t.category === category)
+            : enrichedTransactions;
+
+        return successResponse(res, {
+            transactions: filteredTransactions,
             pagination: {
                 total,
                 page: parseInt(page),
                 limit: parseInt(limit),
                 totalPages: Math.ceil(total / parseInt(limit))
             }
-        });
+        }, 'Transactions fetched successfully', 200);
 
     } catch (error) {
         console.error('Get transactions error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch transactions',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to fetch transactions', 500);
     }
 };
 
@@ -276,25 +343,22 @@ exports.getTransactionById = async (req, res) => {
         });
 
         if (!transaction) {
-            return res.status(404).json({
-                success: false,
-                message: 'Transaction not found'
-            });
+            return errorResponse(res, 'Transaction not found', 404);
         }
 
-        res.status(200).json({
-            success: true,
-            message: 'Transaction fetched successfully',
-            data: transaction
-        });
+        // Add category and signed amount
+        const category = getTransactionCategory(transaction.transactionType);
+        const responseData = {
+            ...transaction,
+            category,
+            signedAmount: getSignedAmount(transaction.amount, category)
+        };
+
+        return successResponse(res, responseData, 'Transaction fetched successfully', 200);
 
     } catch (error) {
         console.error('Get transaction error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch transaction',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to fetch transaction', 500);
     }
 };
 
@@ -324,20 +388,24 @@ exports.getTransactionsByPaymentId = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Payment transactions fetched successfully',
-            data: transactions,
-            count: transactions.length
+        // Add category to each
+        const enrichedTransactions = transactions.map(t => {
+            const category = getTransactionCategory(t.transactionType);
+            return {
+                ...t,
+                category,
+                signedAmount: getSignedAmount(t.amount, category)
+            };
         });
+
+        return successResponse(res, {
+            transactions: enrichedTransactions,
+            count: enrichedTransactions.length
+        }, 'Payment transactions fetched successfully', 200);
 
     } catch (error) {
         console.error('Get payment transactions error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch payment transactions',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to fetch payment transactions', 500);
     }
 };
 
@@ -376,25 +444,29 @@ exports.getTransactionsByTenantId = async (req, res) => {
             prisma.transaction.count({ where: { tenantId: parseInt(tenantId) } })
         ]);
 
-        res.status(200).json({
-            success: true,
-            message: 'Tenant transactions fetched successfully',
-            data: transactions,
+        // Add category to each
+        const enrichedTransactions = transactions.map(t => {
+            const category = getTransactionCategory(t.transactionType);
+            return {
+                ...t,
+                category,
+                signedAmount: getSignedAmount(t.amount, category)
+            };
+        });
+
+        return successResponse(res, {
+            transactions: enrichedTransactions,
             pagination: {
                 total,
                 page: parseInt(page),
                 limit: parseInt(limit),
                 totalPages: Math.ceil(total / parseInt(limit))
             }
-        });
+        }, 'Tenant transactions fetched successfully', 200);
 
     } catch (error) {
         console.error('Get tenant transactions error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch tenant transactions',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to fetch tenant transactions', 500);
     }
 };
 
@@ -411,10 +483,7 @@ exports.updateTransactionStatus = async (req, res) => {
         } = req.body;
 
         if (!status) {
-            return res.status(400).json({
-                success: false,
-                message: 'Status is required'
-            });
+            return errorResponse(res, 'Status is required', 400);
         }
 
         // Check if transaction exists
@@ -423,10 +492,7 @@ exports.updateTransactionStatus = async (req, res) => {
         });
 
         if (!existingTransaction) {
-            return res.status(404).json({
-                success: false,
-                message: 'Transaction not found'
-            });
+            return errorResponse(res, 'Transaction not found', 404);
         }
 
         // Update transaction
@@ -457,19 +523,19 @@ exports.updateTransactionStatus = async (req, res) => {
             }
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Transaction status updated successfully',
-            data: transaction
-        });
+        // Add category
+        const category = getTransactionCategory(transaction.transactionType);
+        const responseData = {
+            ...transaction,
+            category,
+            signedAmount: getSignedAmount(transaction.amount, category)
+        };
+
+        return successResponse(res, responseData, 'Transaction status updated successfully', 200);
 
     } catch (error) {
         console.error('Update transaction status error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update transaction status',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to update transaction status', 500);
     }
 };
 
@@ -494,10 +560,7 @@ exports.updateTransaction = async (req, res) => {
         });
 
         if (!existingTransaction) {
-            return res.status(404).json({
-                success: false,
-                message: 'Transaction not found'
-            });
+            return errorResponse(res, 'Transaction not found', 404);
         }
 
         // Build update data
@@ -532,19 +595,19 @@ exports.updateTransaction = async (req, res) => {
             }
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Transaction updated successfully',
-            data: transaction
-        });
+        // Add category
+        const category = getTransactionCategory(transaction.transactionType);
+        const responseData = {
+            ...transaction,
+            category,
+            signedAmount: getSignedAmount(transaction.amount, category)
+        };
+
+        return successResponse(res, responseData, 'Transaction updated successfully', 200);
 
     } catch (error) {
         console.error('Update transaction error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update transaction',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to update transaction', 500);
     }
 };
 
@@ -559,10 +622,7 @@ exports.deleteTransaction = async (req, res) => {
         });
 
         if (!transaction) {
-            return res.status(404).json({
-                success: false,
-                message: 'Transaction not found'
-            });
+            return errorResponse(res, 'Transaction not found', 404);
         }
 
         // Delete transaction
@@ -570,22 +630,15 @@ exports.deleteTransaction = async (req, res) => {
             where: { id: parseInt(id) }
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Transaction deleted successfully'
-        });
+        return successResponse(res, null, 'Transaction deleted successfully', 200);
 
     } catch (error) {
         console.error('Delete transaction error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to delete transaction',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to delete transaction', 500);
     }
 };
 
-// =================== GET TRANSACTION STATISTICS ===================
+// =================== GET TRANSACTION STATISTICS WITH RECEIVABLE/PAYABLE ===================
 exports.getTransactionStatistics = async (req, res) => {
     try {
         const { startDate, endDate, hostelId } = req.query;
@@ -607,7 +660,8 @@ exports.getTransactionStatistics = async (req, res) => {
             transactionsByGateway,
             transactionsByType,
             transactionsByStatus,
-            amountData
+            amountData,
+            allTransactions
         ] = await Promise.all([
             prisma.transaction.count({ where: filters }),
             prisma.transaction.count({ where: { ...filters, status: 'completed' } }),
@@ -635,42 +689,201 @@ exports.getTransactionStatistics = async (req, res) => {
                 where: { ...filters, status: 'completed' },
                 _sum: { amount: true, fee: true },
                 _avg: { amount: true }
+            }),
+            // Get all transactions to calculate receivable/payable
+            prisma.transaction.findMany({
+                where: { ...filters, status: 'completed' },
+                select: {
+                    amount: true,
+                    transactionType: true,
+                    fee: true
+                }
             })
         ]);
 
-        res.status(200).json({
-            success: true,
-            message: 'Transaction statistics fetched successfully',
-            data: {
+        // Calculate Receivable and Payable
+        let totalReceivable = 0;
+        let totalPayable = 0;
+        let receivableCount = 0;
+        let payableCount = 0;
+
+        allTransactions.forEach(t => {
+            const category = getTransactionCategory(t.transactionType);
+            if (category === 'receivable') {
+                totalReceivable += t.amount || 0;
+                receivableCount++;
+            } else if (category === 'payable') {
+                totalPayable += t.amount || 0;
+                payableCount++;
+            }
+        });
+
+        // Net balance (receivable - payable)
+        const netBalance = totalReceivable - totalPayable;
+
+        return successResponse(res, {
+            summary: {
                 totalTransactions,
-                statusBreakdown: {
-                    completed: completedTransactions,
-                    pending: pendingTransactions,
-                    failed: failedTransactions
+                completed: completedTransactions,
+                pending: pendingTransactions,
+                failed: failedTransactions
+            },
+            financials: {
+                totalReceivable: totalReceivable,
+                totalPayable: totalPayable,
+                netBalance: netBalance,
+                totalFees: amountData._sum.fee || 0,
+                averageTransactionAmount: amountData._avg.amount || 0
+            },
+            breakdown: {
+                receivable: {
+                    count: receivableCount,
+                    amount: totalReceivable
                 },
-                transactionsByGateway,
-                transactionsByType,
-                transactionsByStatus,
-                amountStatistics: {
-                    totalAmount: amountData._sum.amount || 0,
-                    totalFees: amountData._sum.fee || 0,
-                    averageAmount: amountData._avg.amount || 0,
-                    netAmount: (amountData._sum.amount || 0) - (amountData._sum.fee || 0)
+                payable: {
+                    count: payableCount,
+                    amount: totalPayable
+                }
+            },
+            transactionsByGateway,
+            transactionsByType: transactionsByType.map(item => ({
+                ...item,
+                category: getTransactionCategory(item.transactionType)
+            })),
+            transactionsByStatus
+        }, 'Transaction statistics fetched successfully', 200);
+
+    } catch (error) {
+        console.error('Get statistics error:', error);
+        return errorResponse(res, 'Failed to fetch statistics', 500);
+    }
+};
+
+// =================== GET RECEIVABLES SUMMARY ===================
+exports.getReceivablesSummary = async (req, res) => {
+    try {
+        const { hostelId, startDate, endDate } = req.query;
+
+        const filters = { status: 'completed' };
+        if (hostelId) filters.hostelId = parseInt(hostelId);
+        if (startDate || endDate) {
+            filters.createdAt = {};
+            if (startDate) filters.createdAt.gte = new Date(startDate);
+            if (endDate) filters.createdAt.lte = new Date(endDate);
+        }
+
+        const transactions = await prisma.transaction.findMany({
+            where: filters,
+            select: {
+                id: true,
+                amount: true,
+                transactionType: true,
+                createdAt: true,
+                tenant: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
                 }
             }
         });
 
-    } catch (error) {
-        console.error('Get statistics error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch statistics',
-            error: error.message
+        // Filter only receivables
+        const receivables = transactions.filter(t => 
+            getTransactionCategory(t.transactionType) === 'receivable'
+        );
+
+        const totalReceivable = receivables.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        // Group by type
+        const byType = {};
+        receivables.forEach(t => {
+            if (!byType[t.transactionType]) {
+                byType[t.transactionType] = {
+                    count: 0,
+                    amount: 0
+                };
+            }
+            byType[t.transactionType].count++;
+            byType[t.transactionType].amount += t.amount || 0;
         });
+
+        return successResponse(res, {
+            total: totalReceivable,
+            count: receivables.length,
+            byType,
+            recentTransactions: receivables.slice(0, 10)
+        }, 'Receivables summary fetched successfully', 200);
+
+    } catch (error) {
+        console.error('Get receivables error:', error);
+        return errorResponse(res, 'Failed to fetch receivables summary', 500);
     }
 };
 
-// =================== WEBHOOK HANDLER (for payment gateway callbacks) ===================
+// =================== GET PAYABLES SUMMARY ===================
+exports.getPayablesSummary = async (req, res) => {
+    try {
+        const { hostelId, startDate, endDate } = req.query;
+
+        const filters = { status: 'completed' };
+        if (hostelId) filters.hostelId = parseInt(hostelId);
+        if (startDate || endDate) {
+            filters.createdAt = {};
+            if (startDate) filters.createdAt.gte = new Date(startDate);
+            if (endDate) filters.createdAt.lte = new Date(endDate);
+        }
+
+        const transactions = await prisma.transaction.findMany({
+            where: filters,
+            select: {
+                id: true,
+                amount: true,
+                transactionType: true,
+                createdAt: true,
+                tenant: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                }
+            }
+        });
+
+        // Filter only payables
+        const payables = transactions.filter(t => 
+            getTransactionCategory(t.transactionType) === 'payable'
+        );
+
+        const totalPayable = payables.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        // Group by type
+        const byType = {};
+        payables.forEach(t => {
+            if (!byType[t.transactionType]) {
+                byType[t.transactionType] = {
+                    count: 0,
+                    amount: 0
+                };
+            }
+            byType[t.transactionType].count++;
+            byType[t.transactionType].amount += t.amount || 0;
+        });
+
+        return successResponse(res, {
+            total: totalPayable,
+            count: payables.length,
+            byType,
+            recentTransactions: payables.slice(0, 10)
+        }, 'Payables summary fetched successfully', 200);
+
+    } catch (error) {
+        console.error('Get payables error:', error);
+        return errorResponse(res, 'Failed to fetch payables summary', 500);
+    }
+};
+
+// =================== WEBHOOK HANDLER ===================
 exports.handleWebhook = async (req, res) => {
     try {
         const {
@@ -698,10 +911,7 @@ exports.handleWebhook = async (req, res) => {
         }
 
         if (!transaction) {
-            return res.status(404).json({
-                success: false,
-                message: 'Transaction not found'
-            });
+            return errorResponse(res, 'Transaction not found', 404);
         }
 
         // Update transaction status
@@ -715,20 +925,10 @@ exports.handleWebhook = async (req, res) => {
             }
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Webhook processed successfully',
-            data: updatedTransaction
-        });
+        return successResponse(res, updatedTransaction, 'Webhook processed successfully', 200);
 
     } catch (error) {
         console.error('Webhook handler error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to process webhook',
-            error: error.message
-        });
+        return errorResponse(res, 'Failed to process webhook', 500);
     }
 };
-
-

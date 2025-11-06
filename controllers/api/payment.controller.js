@@ -107,6 +107,18 @@ const recordPayment = async (req, res) => {
                 }
             });
 
+            // Map payment type to transaction type (all payments are RECEIVABLE - money coming in)
+            const transactionTypeMapping = {
+                'rent': 'rent_received',
+                'deposit': 'deposit_received',
+                'maintenance': 'maintenance_received',
+                'electricity': 'dues_received',
+                'water': 'dues_received',
+                'other': 'other_received'
+            };
+            
+            const transactionType = transactionTypeMapping[paymentType] || 'other_received';
+
             // Automatically create transaction when payment status is 'paid'
             await tx.transaction.create({
                 data: {
@@ -114,7 +126,7 @@ const recordPayment = async (req, res) => {
                     tenantId: tenantId ? parseInt(tenantId) : null,
                     hostelId: hostelId ? parseInt(hostelId) : null,
                     gateway: 'manual',
-                    transactionType: paymentType || 'rent',
+                    transactionType: transactionType,  // Use mapped receivable type
                     amount: parseFloat(amount),
                     currency: 'PKR',
                     fee: 0,
@@ -122,7 +134,7 @@ const recordPayment = async (req, res) => {
                     orderId: receiptNumber || null,
                     status: 'completed',
                     responseCode: '200',
-                    responseMessage: 'Payment completed successfully',
+                    responseMessage: `Payment received: ${paymentType}`,
                     paymentMethod: paymentMethod,
                     ipAddress: req.ip || null,
                     userAgent: req.headers['user-agent'] || null

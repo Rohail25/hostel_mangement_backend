@@ -28,13 +28,35 @@ router.get('/transactions', transactionController.getAllTransactions);
 
 /**
  * @route   GET /api/admin/transactions/statistics
- * @desc    Get transaction statistics
+ * @desc    Get transaction statistics with receivable/payable breakdown
  * @access  Admin, Manager
  * @query   startDate, endDate, hostelId
  */
 router.get('/transactions/statistics', 
     authorize('admin', 'manager'),
     transactionController.getTransactionStatistics
+);
+
+/**
+ * @route   GET /api/admin/transactions/receivables
+ * @desc    Get receivables summary (money coming in)
+ * @access  Admin, Manager
+ * @query   hostelId, startDate, endDate
+ */
+router.get('/transactions/receivables', 
+    authorize('admin', 'manager'),
+    transactionController.getReceivablesSummary
+);
+
+/**
+ * @route   GET /api/admin/transactions/payables
+ * @desc    Get payables summary (money going out)
+ * @access  Admin, Manager
+ * @query   hostelId, startDate, endDate
+ */
+router.get('/transactions/payables', 
+    authorize('admin', 'manager'),
+    transactionController.getPayablesSummary
 );
 
 /**
