@@ -1,5 +1,5 @@
-const { prisma } = require('../../config/db');
-const { successResponse, errorResponse } = require('../../Helper/helper');
+const { prisma } = require('../../../config/db');
+const { successResponse, errorResponse } = require('../../../Helper/helper');
 
 /* ----------------------------- helpers ----------------------------- */
 

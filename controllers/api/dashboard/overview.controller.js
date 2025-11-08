@@ -1,5 +1,5 @@
-const { prisma } = require('../../config/db');
-const { successResponse, errorResponse } = require('../../Helper/helper');
+const { prisma } = require('../../../config/db');
+const { successResponse, errorResponse } = require('../../../Helper/helper');
 
 // ---- lightweight cache (uses utils/cache if you added it; otherwise in-memory) ----
 let memoryCache = {};

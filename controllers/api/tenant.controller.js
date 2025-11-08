@@ -242,9 +242,261 @@ const deleteTenant = async (req, res) => {
   }
 };
 
+// ======================================================
+// GET TENANT BY ID (Detailed Profile)
+// ======================================================
+const getTenantById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = parseInt(id, 10);
+
+    if (Number.isNaN(tenantId)) {
+      return errorResponse(res, "Invalid tenant id", 400);
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true
+          }
+        },
+        allocations: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            hostel: { select: { id: true, name: true, address: true } },
+            creator: { select: { id: true, name: true } }
+          }
+        },
+        payments: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: {
+            hostel: { select: { id: true, name: true } },
+            collector: { select: { id: true, name: true } }
+          }
+        },
+        alerts: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true
+          }
+        }
+      }
+    });
+
+    if (!tenant) {
+      return errorResponse(res, "Tenant not found", 404);
+    }
+
+    return successResponse(res, tenant, "Tenant retrieved successfully");
+  } catch (err) {
+    console.error("Get Tenant By ID Error:", err);
+    return errorResponse(res, err.message);
+  }
+};
+
+// ======================================================
+// GET TENANT PAYMENT HISTORY
+// ======================================================
+const getTenantPaymentHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, page = 1, limit = 20 } = req.query;
+
+    const tenantId = parseInt(id, 10);
+    if (Number.isNaN(tenantId)) {
+      return errorResponse(res, "Invalid tenant id", 400);
+    }
+
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = { tenantId };
+    if (status) {
+      where.status = status;
+    }
+
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+        include: {
+          hostel: { select: { id: true, name: true } },
+          collector: { select: { id: true, name: true } }
+        }
+      }),
+      prisma.payment.count({ where })
+    ]);
+
+    const paidAmount = await prisma.payment.aggregate({
+      where: { ...where, status: 'paid' },
+      _sum: { amount: true }
+    });
+
+    const outstandingAmount = await prisma.payment.aggregate({
+      where: { ...where, status: { in: ['pending', 'partial', 'overdue'] } },
+      _sum: { amount: true }
+    });
+
+    return successResponse(
+      res,
+      {
+        payments,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          pages: Math.ceil(total / limitNum)
+        },
+        totals: {
+          paid: paidAmount._sum.amount || 0,
+          outstanding: outstandingAmount._sum.amount || 0
+        }
+      },
+      "Tenant payment history retrieved successfully"
+    );
+  } catch (err) {
+    console.error("Get Tenant Payment History Error:", err);
+    return errorResponse(res, err.message);
+  }
+};
+
+// ======================================================
+// GET TENANT FINANCIAL SUMMARY
+// ======================================================
+const getTenantFinancialSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = parseInt(id, 10);
+
+    if (Number.isNaN(tenantId)) {
+      return errorResponse(res, "Invalid tenant id", 400);
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        totalPaid: true,
+        totalDue: true,
+        securityDeposit: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    if (!tenant) {
+      return errorResponse(res, "Tenant not found", 404);
+    }
+
+    const [paidAggregate, pendingAggregate, recentPayment] = await Promise.all([
+      prisma.payment.aggregate({
+        where: { tenantId, status: 'paid' },
+        _sum: { amount: true },
+        _count: { _all: true }
+      }),
+      prisma.payment.aggregate({
+        where: { tenantId, status: { in: ['pending', 'partial', 'overdue'] } },
+        _sum: { amount: true },
+        _count: { _all: true }
+      }),
+      prisma.payment.findFirst({
+        where: { tenantId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          createdAt: true,
+          hostel: { select: { id: true, name: true } }
+        }
+      })
+    ]);
+
+    const summary = {
+      tenant,
+      payments: {
+        totalPaidAmount: paidAggregate._sum.amount || 0,
+        totalPaidCount: paidAggregate._count._all,
+        outstandingAmount: pendingAggregate._sum.amount || 0,
+        outstandingCount: pendingAggregate._count._all,
+        lastPayment: recentPayment || null
+      }
+    };
+
+    return successResponse(res, summary, "Tenant financial summary retrieved successfully");
+  } catch (err) {
+    console.error("Get Tenant Financial Summary Error:", err);
+    return errorResponse(res, err.message);
+  }
+};
+
+// ======================================================
+// GET ACTIVE TENANTS
+// ======================================================
+const getActiveTenants = async (req, res) => {
+  try {
+    const { search, limit = 20 } = req.query;
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+
+    const where = {
+      status: 'active'
+    };
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } }
+      ];
+    }
+
+    const tenants = await prisma.tenant.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limitNum,
+      include: {
+        _count: { select: { allocations: true, payments: true } },
+        allocations: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            hostel: { select: { id: true, name: true } }
+          }
+        }
+      }
+    });
+
+    return successResponse(res, tenants, "Active tenants retrieved successfully");
+  } catch (err) {
+    console.error("Get Active Tenants Error:", err);
+    return errorResponse(res, err.message);
+  }
+};
+
 module.exports = {
   createTenant,
   updateTenant,
   getAllTenants,
-  deleteTenant
+  deleteTenant,
+  getTenantById,
+  getTenantPaymentHistory,
+  getTenantFinancialSummary,
+  getActiveTenants
 };

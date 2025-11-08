@@ -4,7 +4,7 @@ const cookieParser = require("cookie-parser");
 const { dbConnection } = require("./config/db");
 
 const userRoute = require("./routes/api/admin/user.route");
-const hostelRoute = require("./routes/api/dashboard/hostelManagement.route");
+const dashboardHostelRoute = require("./routes/api/dashboard/hostelManagement.route");
 const userHostelRoute = require("./routes/api/user/hostel.route");
 const floorRoute = require("./routes/api/admin/floor.route");
 const userFloorRoute = require("./routes/api/user/floor.route");
@@ -21,18 +21,20 @@ const stripeRoute = require("./routes/api/stripe.route");
 const userBedRoute = require("./routes/api/user/bed.route");
 const userTransactionRoute = require("./routes/api/user/transaction.route");
 const dashboardRoute = require("./routes/api/admin/dashboard.route");
-const overviewRoute = require("./routes/api/admin/overview.route");
+const overviewRoute = require("./routes/api/dashboard/overview.route");
 const tableRoute = require("./routes/api/admin/table.route");
-const alertRoute = require("./routes/api/dashboard/alerts.route");
-const vendorRoute = require("./routes/api/admin/vendor.route");
+const dashboardAlertRoute = require("./routes/api/dashboard/alerts.route");
+const vendorRoute = require("./routes/api/dashboard/vendors.route");
+const communicationRoute = require("./routes/api/dashboard/communication.route");
+const fpaDashboardRoute = require("./routes/api/dashboard/fpa.route");
+const settingsDashboardRoute = require("./routes/api/dashboard/settings.route");
 const fpaRoute = require("./routes/api/admin/fpa.route");
 const campaignRoute = require("./routes/api/admin/campaign.route");
 const settingRoute = require("./routes/api/admin/setting.route");
-const { set } = require("mongoose");
 const peopleRoute = require("./routes/api/dashboard/people.route");
 const accountsRoute = require("./routes/api/dashboard/accounts.route");
-const hostelmanagementRoute = require("./routes/api/dashboard/hostelManagement.route");
-const alertmanagementRoute = require("./routes/api/dashboard/alerts.route");
+const vendorsRoute = require("./routes/api/dashboard/vendors.route");
+
 
 
 // Load environment variables
@@ -77,9 +79,9 @@ app.use("/api/stripe", stripeRoute);
 app.use("/api/admin", dashboardRoute);
 app.use("/api/admin", overviewRoute);
 app.use("/api/admin", tableRoute);
-app.use("/api/admin", alertRoute);
+app.use("/api/admin", dashboardAlertRoute);
 app.use("/api/admin", vendorRoute);
-app.use("/api/admin", hostelRoute);
+app.use("/api/admin", dashboardHostelRoute);
 app.use("/api/admin", floorRoute);
 app.use("/api/admin", roomRoute);
 app.use("/api/admin", bedRoute);
@@ -94,8 +96,11 @@ app.use("/api/admin", campaignRoute);
 app.use("/api/admin", settingRoute);
 app.use("/api/admin", peopleRoute);
 app.use("/api/admin", accountsRoute);
-app.use("/api/admin", hostelmanagementRoute);
-app.use("/api/admin", alertmanagementRoute);
+app.use("/api/admin", communicationRoute);
+app.use("/api/admin", fpaDashboardRoute);
+app.use("/api/admin", settingsDashboardRoute);
+app.use("/api/admin", vendorsRoute);
+app.use("/api/admin", settingsDashboardRoute);
 
 // Start server
 const PORT = process.env.PORT || 3000;
