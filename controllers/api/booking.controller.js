@@ -686,7 +686,7 @@ const updateBookingStatus = async (req, res) => {
                 where: { id: existingBooking.bedId },
                 data: { 
                     status: 'available',
-                    currentTenantId: null
+                    currentUserId: null
                 }
             });
         }

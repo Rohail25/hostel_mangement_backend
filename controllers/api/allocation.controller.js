@@ -5,6 +5,85 @@
 const { successResponse, errorResponse } = require('../../Helper/helper');
 const { prisma } = require('../../config/db');
 
+const getHostelAccessFilter = (req) => {
+    if (req.userRole === 'owner') {
+        return { ownerId: req.userId };
+    }
+    if (req.userRole === 'manager') {
+        return { managedBy: req.userId };
+    }
+    return {};
+};
+
+const assertHostelAccess = async (req, hostelId) => {
+    const hostel = await prisma.hostel.findUnique({
+        where: { id: hostelId },
+        select: { id: true, ownerId: true, managedBy: true }
+    });
+
+    if (!hostel) {
+        return { ok: false, status: 404, message: "Hostel not found" };
+    }
+
+    if (req.userRole === 'owner' && hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    if (req.userRole === 'manager' && hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    return { ok: true, hostel };
+};
+
+const assertBedAccess = async (req, bedId) => {
+    const bed = await prisma.bed.findUnique({
+        where: { id: bedId },
+        include: {
+            hostel: { select: { id: true, ownerId: true, managedBy: true } },
+            floor: { select: { id: true, hostelId: true } },
+            room: { select: { id: true, hostelId: true, floorId: true } }
+        }
+    });
+
+    if (!bed) {
+        return { ok: false, status: 404, message: "Bed not found" };
+    }
+
+    if (req.userRole === 'owner' && bed.hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this bed" };
+    }
+
+    if (req.userRole === 'manager' && bed.hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this bed" };
+    }
+
+    return { ok: true, bed };
+};
+
+const assertAllocationAccess = async (req, allocationId) => {
+    const allocation = await prisma.allocation.findUnique({
+        where: { id: allocationId },
+        include: {
+            hostel: { select: { id: true, ownerId: true, managedBy: true } }
+        }
+    });
+
+    if (!allocation) {
+        return { ok: false, status: 404, message: "Allocation not found" };
+    }
+
+    if (req.userRole === 'owner' && allocation.hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this allocation" };
+    }
+
+    if (req.userRole === 'manager' && allocation.hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this allocation" };
+    }
+
+    return { ok: true, allocation };
+};
+
 // ===================================
 // ALLOCATE TENANT TO BED
 // ===================================
@@ -23,8 +102,14 @@ const allocateTenant = async (req, res) => {
             notes
         } = req.body;
 
+        const hostelId = parseInt(hostel, 10);
+        const floorId = parseInt(floor, 10);
+        const roomId = parseInt(room, 10);
+        const bedId = parseInt(bed, 10);
+        const tenantId = parseInt(tenant, 10);
+
         // Validation
-        if (!hostel || !floor || !room || !bed || !tenant || !checkInDate || !rentAmount) {
+        if (!Number.isFinite(hostelId) || !Number.isFinite(floorId) || !Number.isFinite(roomId) || !Number.isFinite(bedId) || !Number.isFinite(tenantId) || !checkInDate || !rentAmount) {
             return errorResponse(
                 res,
                 "Hostel, floor, room, bed, tenant, check-in date, and rent amount are required",
@@ -34,7 +119,7 @@ const allocateTenant = async (req, res) => {
 
         // Check if tenant exists
         const tenantExists = await prisma.tenant.findUnique({
-            where: { id: parseInt(tenant) }
+            where: { id: tenantId }
         });
         
         if (!tenantExists) {
@@ -46,15 +131,17 @@ const allocateTenant = async (req, res) => {
             return errorResponse(res, `Tenant is ${tenantExists.status}, cannot allocate`, 400);
         }
 
-        // Check if bed exists and is available
-        const bedData = await prisma.bed.findUnique({
-            where: { id: parseInt(bed) }
-        });
-        
-        if (!bedData) {
-            return errorResponse(res, "Bed not found", 404);
+        const bedAccess = await assertBedAccess(req, bedId);
+        if (!bedAccess.ok) {
+            return errorResponse(res, bedAccess.message, bedAccess.status);
         }
 
+        const bedData = bedAccess.bed;
+        if (bedData.hostelId !== hostelId || bedData.floorId !== floorId || bedData.roomId !== roomId) {
+            return errorResponse(res, "Provided hostel/floor/room do not match the selected bed", 400);
+        }
+
+        // Check if bed exists and is available
         if (bedData.status !== 'available' && bedData.status !== 'reserved') {
             return errorResponse(res, `Bed is ${bedData.status}, cannot allocate`, 400);
         }
@@ -62,7 +149,7 @@ const allocateTenant = async (req, res) => {
         // Check if tenant already has an active allocation
         const existingAllocation = await prisma.allocation.findFirst({
             where: {
-                tenantId: parseInt(tenant),
+                tenantId: tenantId,
                 status: 'active'
             }
         });
@@ -75,28 +162,38 @@ const allocateTenant = async (req, res) => {
             );
         }
 
+        const rentValue = Number(rentAmount);
+        if (!Number.isFinite(rentValue) || rentValue < 0) {
+            return errorResponse(res, "Invalid rent amount", 400);
+        }
+
+        const depositValue = depositAmount ? Number(depositAmount) : 0;
+        if (!Number.isFinite(depositValue) || depositValue < 0) {
+            return errorResponse(res, "Invalid deposit amount", 400);
+        }
+
         // Use transaction to ensure data consistency
         const allocation = await prisma.$transaction(async (tx) => {
             // Create allocation using relation connect
             const newAllocation = await tx.allocation.create({
                 data: {
-                    hostel: { connect: { id: parseInt(hostel) } },
-                    floor: { connect: { id: parseInt(floor) } },
-                    room: { connect: { id: parseInt(room) } },
-                    bed: { connect: { id: parseInt(bed) } },
-                    tenant: { connect: { id: parseInt(tenant) } },
+                    hostel: { connect: { id: hostelId } },
+                    floor: { connect: { id: floorId } },
+                    room: { connect: { id: roomId } },
+                    bed: { connect: { id: bedId } },
+                    tenant: { connect: { id: tenantId } },
                     allocatedBy: { connect: { id: req.userId } },
                     checkInDate: new Date(checkInDate),
                     expectedCheckOutDate: expectedCheckOutDate ? new Date(expectedCheckOutDate) : null,
-                    rentAmount,
-                    depositAmount: depositAmount || 0,
+                    rentAmount: rentValue,
+                    depositAmount: depositValue,
                     notes: notes || null
                 }
             });
 
             // Update bed status (note: currentTenantId still uses User model for backward compatibility)
             await tx.bed.update({
-                where: { id: parseInt(bed) },
+                where: { id: bedId },
                 data: {
                     status: 'occupied'
                     // currentTenantId removed - we now use Allocation to track tenants
@@ -105,7 +202,7 @@ const allocateTenant = async (req, res) => {
 
             // Update room occupied beds count
             await tx.room.update({
-                where: { id: parseInt(room) },
+                where: { id: roomId },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -113,7 +210,7 @@ const allocateTenant = async (req, res) => {
 
             // Update floor occupied beds count
             await tx.floor.update({
-                where: { id: parseInt(floor) },
+                where: { id: floorId },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -121,7 +218,7 @@ const allocateTenant = async (req, res) => {
 
             // Update hostel occupied beds count
             await tx.hostel.update({
-                where: { id: parseInt(hostel) },
+                where: { id: hostelId },
                 data: {
                     occupiedBeds: { increment: 1 }
                 }
@@ -129,7 +226,7 @@ const allocateTenant = async (req, res) => {
 
             // Check and update room status if fully occupied
             const roomData = await tx.room.findUnique({
-                where: { id: parseInt(room) }
+                where: { id: roomId }
             });
             
             if (roomData.occupiedBeds >= roomData.totalBeds) {
@@ -175,14 +272,18 @@ const checkOutTenant = async (req, res) => {
     try {
         const { allocationId } = req.params;
         const { checkOutDate, notes } = req.body;
+        const parsedAllocationId = parseInt(allocationId, 10);
 
-        const allocation = await prisma.allocation.findUnique({
-            where: { id: parseInt(allocationId) }
-        });
-        
-        if (!allocation) {
-            return errorResponse(res, "Allocation not found", 404);
+        if (!Number.isFinite(parsedAllocationId)) {
+            return errorResponse(res, "Invalid allocation id", 400);
         }
+
+        const access = await assertAllocationAccess(req, parsedAllocationId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
+        const allocation = access.allocation;
 
         if (allocation.status !== 'active') {
             return errorResponse(res, "Allocation is not active", 400);
@@ -192,7 +293,7 @@ const checkOutTenant = async (req, res) => {
         await prisma.$transaction(async (tx) => {
             // Update allocation
             await tx.allocation.update({
-                where: { id: parseInt(allocationId) },
+                where: { id: parsedAllocationId },
                 data: {
                     status: 'checked_out',
                     checkOutDate: checkOutDate ? new Date(checkOutDate) : new Date(),
@@ -202,7 +303,7 @@ const checkOutTenant = async (req, res) => {
 
             // Update bed
             await tx.bed.update({
-                where: { id: parseInt(allocation.bedId) },
+                where: { id: allocation.bedId },
                 data: {
                     status: 'available'
                     // currentTenantId removed - we now use Allocation to track tenants
@@ -211,21 +312,21 @@ const checkOutTenant = async (req, res) => {
 
             // Update counts
             await tx.room.update({
-                where: { id: parseInt(allocation.roomId) },
+                where: { id: allocation.roomId },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
             });
 
             await tx.floor.update({
-                where: { id: parseInt(allocation.floorId) },
+                where: { id: allocation.floorId },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
             });
 
             await tx.hostel.update({
-                where: { id: parseInt(allocation.hostelId) },
+                where: { id: allocation.hostelId },
                 data: {
                     occupiedBeds: { decrement: 1 }
                 }
@@ -233,7 +334,7 @@ const checkOutTenant = async (req, res) => {
 
             // Update room status
             const roomData = await tx.room.findUnique({
-                where: { id: parseInt(allocation.roomId) }
+                where: { id: allocation.roomId }
             });
             
             if (roomData.occupiedBeds === 0) {
@@ -250,7 +351,7 @@ const checkOutTenant = async (req, res) => {
         });
 
         const populatedAllocation = await prisma.allocation.findUnique({
-            where: { id: parseInt(allocationId) },
+            where: { id: parsedAllocationId },
             include: {
                 bed: { select: { bedNumber: true } },
                 room: { select: { roomNumber: true } }
@@ -271,26 +372,32 @@ const transferTenant = async (req, res) => {
     try {
         const { allocationId } = req.params;
         const { newBedId, reason } = req.body;
+        const parsedAllocationId = parseInt(allocationId, 10);
+        const parsedNewBedId = parseInt(newBedId, 10);
 
-        if (!newBedId) {
+        if (!Number.isFinite(parsedAllocationId) || !Number.isFinite(parsedNewBedId)) {
             return errorResponse(res, "New bed ID is required", 400);
         }
 
-        const allocation = await prisma.allocation.findUnique({
-            where: { id: parseInt(allocationId) }
-        });
-        
-        if (!allocation) {
-            return errorResponse(res, "Allocation not found", 404);
+        const access = await assertAllocationAccess(req, parsedAllocationId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
         }
+
+        const allocation = access.allocation;
 
         if (allocation.status !== 'active') {
             return errorResponse(res, "Can only transfer active allocations", 400);
         }
 
         // Check if new bed is available
+        const bedAccess = await assertBedAccess(req, parsedNewBedId);
+        if (!bedAccess.ok) {
+            return errorResponse(res, bedAccess.message, bedAccess.status);
+        }
+
         const newBed = await prisma.bed.findUnique({
-            where: { id: parseInt(newBedId) },
+            where: { id: parsedNewBedId },
             include: {
                 room: {
                     include: {
@@ -308,17 +415,21 @@ const transferTenant = async (req, res) => {
             return errorResponse(res, "New bed is not available", 400);
         }
 
-        const oldBedId = parseInt(allocation.bedId);
-        const oldRoomId = parseInt(allocation.roomId);
+        if (allocation.hostelId !== newBed.room.hostelId) {
+            return errorResponse(res, "New bed must belong to the same hostel", 400);
+        }
+
+        const oldBedId = allocation.bedId;
+        const oldRoomId = allocation.roomId;
 
         // Get tenant ID from allocation
-        const tenantId = parseInt(allocation.tenantId);
+        const tenantId = allocation.tenantId;
 
         // Use transaction for consistency
         await prisma.$transaction(async (tx) => {
             // Get current transfer history
             const currentAllocation = await tx.allocation.findUnique({
-                where: { id: parseInt(allocationId) }
+                where: { id: parsedAllocationId }
             });
 
             // Add new transfer record to history
@@ -335,9 +446,9 @@ const transferTenant = async (req, res) => {
 
             // Update allocation with new bed info
             await tx.allocation.update({
-                where: { id: parseInt(allocationId) },
+                where: { id: parsedAllocationId },
                 data: {
-                    bedId: newBedId,
+                    bedId: parsedNewBedId,
                     roomId: newBed.roomId,
                     floorId: newBed.room.floorId,
                     transferHistory: updatedHistory
@@ -354,7 +465,7 @@ const transferTenant = async (req, res) => {
 
             // Update new bed
             await tx.bed.update({
-                where: { id: newBedId },
+                where: { id: parsedNewBedId },
                 data: {
                     status: 'occupied'
                 }
@@ -378,7 +489,7 @@ const transferTenant = async (req, res) => {
         });
 
         const populatedAllocation = await prisma.allocation.findUnique({
-            where: { id: parseInt(allocationId) },
+            where: { id: parsedAllocationId },
             include: {
                 bed: { 
                     select: { 
@@ -409,11 +520,27 @@ const getAllAllocations = async (req, res) => {
 
         // Build filter
         const where = {};
-        if (hostel) where.hostelId = hostel;
+        if (hostel) {
+            const hostelId = parseInt(hostel, 10);
+            if (!Number.isFinite(hostelId)) {
+                return errorResponse(res, "Invalid hostel id", 400);
+            }
+            where.hostelId = hostelId;
+        }
         if (status) where.status = status;
+
+        const hostelAccessFilter = getHostelAccessFilter(req);
+        if (Object.keys(hostelAccessFilter).length > 0) {
+            where.hostel = hostelAccessFilter;
+        }
 
         // Pagination
         const skip = (page - 1) * limit;
+
+        const pageNumber = parseInt(page, 10) || 1;
+        const limitNumber = parseInt(limit, 10) || 20;
+
+        const skip = (pageNumber - 1) * limitNumber;
 
         const [allocations, total] = await Promise.all([
             prisma.allocation.findMany({
@@ -432,8 +559,8 @@ const getAllAllocations = async (req, res) => {
                     allocatedBy: { select: { name: true } }
                 },
                 orderBy: { allocationDate: 'desc' },
-                take: parseInt(limit),
-                skip: skip
+                take: limitNumber,
+                skip
             }),
             prisma.allocation.count({ where })
         ]);
@@ -442,9 +569,9 @@ const getAllAllocations = async (req, res) => {
             allocations,
             pagination: {
                 total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                pages: Math.ceil(total / limit)
+                page: pageNumber,
+                limit: limitNumber,
+                pages: Math.ceil(total / limitNumber)
             }
         }, "Allocations retrieved successfully", 200);
     } catch (err) {
@@ -459,7 +586,16 @@ const getAllAllocations = async (req, res) => {
 const getAllocationById = async (req, res) => {
     try {
         const { id } = req.params;
-        const allocationId = parseInt(id);
+        const allocationId = parseInt(id, 10);
+        if (!Number.isFinite(allocationId)) {
+            return errorResponse(res, "Invalid allocation id", 400);
+        }
+
+        const access = await assertAllocationAccess(req, allocationId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const allocation = await prisma.allocation.findUnique({
             where: { id: allocationId },
             include: {
@@ -489,10 +625,19 @@ const getAllocationById = async (req, res) => {
 const getActiveAllocationsByHostel = async (req, res) => {
     try {
         const { hostelId } = req.params;
+        const parsedHostelId = parseInt(hostelId, 10);
+        if (!Number.isFinite(parsedHostelId)) {
+            return errorResponse(res, "Invalid hostel id", 400);
+        }
+
+        const access = await assertHostelAccess(req, parsedHostelId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
 
         const allocations = await prisma.allocation.findMany({
             where: {
-                hostelId,
+                hostelId: parsedHostelId,
                 status: 'active'
             },
             include: {
@@ -519,7 +664,16 @@ const getActiveAllocationsByHostel = async (req, res) => {
 const updateAllocation = async (req, res) => {
     try {
         const { id } = req.params;
-        const allocationId = parseInt(id);
+        const allocationId = parseInt(id, 10);
+        if (!Number.isFinite(allocationId)) {
+            return errorResponse(res, "Invalid allocation id", 400);
+        }
+
+        const access = await assertAllocationAccess(req, allocationId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const updates = req.body;
 
         // Remove fields that shouldn't be updated directly
@@ -537,8 +691,20 @@ const updateAllocation = async (req, res) => {
 
         // Prepare update data
         const updateData = {};
-        if (updates.rentAmount !== undefined) updateData.rentAmount = updates.rentAmount;
-        if (updates.depositAmount !== undefined) updateData.depositAmount = updates.depositAmount;
+        if (updates.rentAmount !== undefined) {
+            const rentValue = Number(updates.rentAmount);
+            if (!Number.isFinite(rentValue) || rentValue < 0) {
+                return errorResponse(res, "Invalid rent amount", 400);
+            }
+            updateData.rentAmount = rentValue;
+        }
+        if (updates.depositAmount !== undefined) {
+            const depositValue = Number(updates.depositAmount);
+            if (!Number.isFinite(depositValue) || depositValue < 0) {
+                return errorResponse(res, "Invalid deposit amount", 400);
+            }
+            updateData.depositAmount = depositValue;
+        }
         if (updates.paymentStatus) updateData.paymentStatus = updates.paymentStatus;
         if (updates.expectedCheckOutDate !== undefined) {
             updateData.expectedCheckOutDate = updates.expectedCheckOutDate ? new Date(updates.expectedCheckOutDate) : null;

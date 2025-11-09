@@ -13,6 +13,7 @@ datasource db {
 
 enum Role {
   admin
+  owner
   manager
   staff
   user
@@ -233,6 +234,7 @@ model User {
 
   // Relations
   managedHostels    Hostel[]           @relation("HostelManager")
+  ownedHostels      Hostel[]           @relation("HostelOwner")
   tenantProfile     Tenant?            @relation("TenantUser")
   allocatedBy       Allocation[]       @relation("AllocationCreator")
   currentBeds       Bed[]              @relation("CurrentTenant")
@@ -268,12 +270,14 @@ model Hostel {
   operatingHours Json?
   status         HostelStatus @default(active)
   managedBy      Int?
+  ownerId        Int?
   images         Json?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   // Relations
   manager      User?         @relation("HostelManager", fields: [managedBy], references: [id], onDelete: SetNull)
+  owner        User?         @relation("HostelOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   floors       Floor[]
   rooms        Room[]
   allocations  Allocation[]
@@ -288,6 +292,7 @@ model Hostel {
   @@index([name])
   @@index([status])
   @@index([managedBy])
+  @@index([ownerId])
 }
 
 model Tenant {
@@ -488,59 +493,133 @@ model Setting {
 // =================== CORE STRUCTURES ===================
 
 model Floor {
-  id        Int      @id @default(autoincrement())
-  hostelId  Int
-  name      String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           Int          @id @default(autoincrement())
+  hostelId     Int
+  floorNumber  Int
+  floorName    String?      @db.VarChar(255)
+  description  String?      @db.Text
+  totalRooms   Int          @default(0)
+  totalBeds    Int          @default(0)
+  occupiedBeds Int          @default(0)
+  amenities    Json?
+  floorPlan    Json?
+  status       FloorStatus  @default(active)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
   rooms  Room[]
+  beds   Bed[]
+
+  @@unique([hostelId, floorNumber], name: "hostelId_floorNumber")
+  @@index([status])
+  @@index([hostelId])
 }
 
 model Room {
-  id        Int      @id @default(autoincrement())
-  hostelId  Int
-  floorId   Int
-  number    String
-  status    String   @default("vacant")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                   Int        @id @default(autoincrement())
+  hostelId             Int
+  floorId              Int
+  roomNumber           String     @db.VarChar(50)
+  roomType             RoomType   @default(single)
+  totalBeds            Int
+  occupiedBeds         Int        @default(0)
+  pricePerBed          Float
+  status               RoomStatus @default(vacant)
+  amenities            Json?
+  dimensions           Json?
+  hasAttachedBathroom  Boolean    @default(false)
+  hasBalcony           Boolean    @default(false)
+  furnishing           Furnishing @default(furnished)
+  images               Json?
+  maintenanceSchedule  Json?
+  notes                String?    @db.Text
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
-  hostel  Hostel    @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  floor   Floor     @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  beds    Bed[]
+  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor  Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  beds   Bed[]
   Booking Booking[]
+  allocations Allocation[]
+
+  @@unique([hostelId, roomNumber], name: "hostelId_roomNumber")
+  @@index([status])
+  @@index([hostelId])
+  @@index([floorId])
 }
 
 model Bed {
-  id            Int      @id @default(autoincrement())
-  roomId        Int
-  currentUserId Int?
-  reservedById  Int?
-  number        String
-  status        String   @default("available")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                Int       @id @default(autoincrement())
+  hostelId          Int
+  floorId           Int
+  roomId            Int
+  bedNumber         String    @db.VarChar(50)
+  bedType           BedType   @default(single)
+  position          Json?
+  status            BedStatus @default(available)
+  currentUserId     Int?
+  reservedById      Int?
+  reservationExpiry DateTime?
+  condition         BedCondition @default(good)
+  notes             String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  room         Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  currentUser  User? @relation("CurrentTenant", fields: [currentUserId], references: [id], onDelete: SetNull)
-  reservedUser User? @relation("BedReservation", fields: [reservedById], references: [id], onDelete: SetNull)
+  hostel       Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor        Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  room         Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  currentUser  User?  @relation("CurrentTenant", fields: [currentUserId], references: [id], onDelete: SetNull)
+  reservedUser User?  @relation("BedReservation", fields: [reservedById], references: [id], onDelete: SetNull)
+  allocations  Allocation[]
+
+  @@unique([roomId, bedNumber], name: "roomId_bedNumber")
+  @@index([status])
+  @@index([hostelId])
+  @@index([floorId])
+  @@index([roomId])
 }
 
 model Allocation {
-  id          Int      @id @default(autoincrement())
-  tenantId    Int
-  hostelId    Int
-  createdById Int?
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                  Int               @id @default(autoincrement())
+  hostelId            Int
+  floorId             Int
+  roomId              Int
+  bedId               Int
+  tenantId            Int
+  allocatedById       Int?
+  allocationDate      DateTime          @default(now())
+  checkInDate         DateTime
+  checkOutDate        DateTime?
+  expectedCheckOutDate DateTime?
+  rentAmount          Float
+  depositAmount       Float             @default(0)
+  status              AllocationStatus  @default(active)
+  paymentStatus       PaymentStatus     @default(pending)
+  transferHistory     Json?
+  notes               String?           @db.Text
+  documents           Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
-  tenant  Tenant @relation("TenantAllocations", fields: [tenantId], references: [id], onDelete: Cascade)
-  hostel  Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  creator User?  @relation("AllocationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  hostel      Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor       Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  room        Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  bed         Bed    @relation(fields: [bedId], references: [id], onDelete: Cascade)
+  tenant      Tenant @relation("TenantAllocations", fields: [tenantId], references: [id], onDelete: Cascade)
+  allocatedBy User?  @relation("AllocationCreator", fields: [allocatedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([bedId, status])
+  @@index([roomId, status])
+  @@index([hostelId, status])
+  @@index([allocationDate])
+  @@index([hostelId])
+  @@index([floorId])
+  @@index([roomId])
+  @@index([bedId])
+  @@index([tenantId])
+  @@index([allocatedById])
 }
 
 model Payment {

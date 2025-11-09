@@ -6,7 +6,7 @@
 const mongoose = require('mongoose');
 
 // Define Role Enum — same as Prisma
-const ROLE_ENUM = ['admin', 'manager', 'staff', 'user'];
+const ROLE_ENUM = ['admin', 'owner', 'manager', 'staff', 'user'];
 
 // Define User Schema
 const userSchema = new mongoose.Schema(

@@ -55,7 +55,7 @@ const upload = multer({
 router.post(
   '/tenant',
   authenticate,
-  authorize('admin', 'manager'),
+  authorize('admin', 'manager', 'owner'),
   upload.fields([
     { name: 'profilePhoto', maxCount: 1 },
     { name: 'documents', maxCount: 10 }
@@ -64,25 +64,25 @@ router.post(
 );
 
 // Get all tenants (paginated + filter)
-router.get('/tenant', authenticate, authorize('admin', 'manager'), getAllTenants);
+router.get('/tenant', authenticate, authorize('admin', 'manager', 'owner'), getAllTenants);
 
 // Get active tenants
-router.get('/tenants/active', authenticate, authorize('admin', 'manager'), getActiveTenants);
+router.get('/tenants/active', authenticate, authorize('admin', 'manager', 'owner'), getActiveTenants);
 
 // Get tenant payment history
-router.get('/tenant/:id/payments', authenticate, authorize('admin', 'manager'), getTenantPaymentHistory);
+router.get('/tenant/:id/payments', authenticate, authorize('admin', 'manager', 'owner'), getTenantPaymentHistory);
 
 // Get tenant financial summary
-router.get('/tenant/:id/financial-summary', authenticate, authorize('admin', 'manager'), getTenantFinancialSummary);
+router.get('/tenant/:id/financial-summary', authenticate, authorize('admin', 'manager', 'owner'), getTenantFinancialSummary);
 
 // Get tenant by ID
-router.get('/tenant/:id', authenticate, authorize('admin', 'manager'), getTenantById);
+router.get('/tenant/:id', authenticate, authorize('admin', 'manager', 'owner'), getTenantById);
 
 // Update tenant (profile + documents)
 router.put(
   '/tenant/:id',
   authenticate,
-  authorize('admin', 'manager'),
+  authorize('admin', 'manager', 'owner'),
   upload.fields([
     { name: 'profilePhoto', maxCount: 1 },
     { name: 'documents', maxCount: 10 }
@@ -91,6 +91,6 @@ router.put(
 );
 
 // Delete tenant
-router.delete('/tenant/:id', authenticate, authorize('admin'), deleteTenant);
+router.delete('/tenant/:id', authenticate, authorize('admin', 'owner'), deleteTenant);
 
 module.exports = router;

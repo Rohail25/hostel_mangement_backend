@@ -5,6 +5,73 @@
 const { successResponse, errorResponse } = require('../../Helper/helper');
 const { prisma } = require('../../config/db');
 
+const buildHostelScopeFilter = (req) => {
+    if (req.userRole === 'owner') {
+        return { ownerId: req.userId };
+    }
+    if (req.userRole === 'manager') {
+        return { managedBy: req.userId };
+    }
+    return {};
+};
+
+const ensureHostelAccess = async (req, hostelId) => {
+    const hostel = await prisma.hostel.findUnique({
+        where: { id: hostelId },
+        select: { id: true, ownerId: true, managedBy: true }
+    });
+
+    if (!hostel) {
+        return { ok: false, status: 404, message: "Hostel not found" };
+    }
+
+    if (req.userRole === 'owner' && hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    if (req.userRole === 'manager' && hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    return { ok: true, hostel };
+};
+
+const ensurePaymentAccess = async (req, paymentId) => {
+    if (req.userRole === 'admin' || req.userRole === 'staff') {
+        return prisma.payment.findUnique({
+            where: { id: paymentId },
+            select: { id: true, hostelId: true }
+        });
+    }
+
+    const scope = buildHostelScopeFilter(req);
+    return prisma.payment.findFirst({
+        where: {
+            id: paymentId,
+            hostel: scope
+        },
+        select: { id: true, hostelId: true }
+    });
+};
+
+const ensureAllocationAccess = async (req, allocationId) => {
+    const allocation = await prisma.allocation.findUnique({
+        where: { id: allocationId },
+        select: { id: true, hostelId: true }
+    });
+
+    if (!allocation) {
+        return { ok: false, status: 404, message: "Allocation not found" };
+    }
+
+    const hostelAccess = await ensureHostelAccess(req, allocation.hostelId);
+    if (!hostelAccess.ok) {
+        return hostelAccess;
+    }
+
+    return { ok: true, allocation };
+};
+
 // ===================================
 // RECORD PAYMENT
 // ===================================
@@ -36,6 +103,11 @@ const recordPayment = async (req, res) => {
             );
         }
 
+        const parsedHostelId = parseInt(hostelId, 10);
+        if (Number.isNaN(parsedHostelId)) {
+            return errorResponse(res, "Invalid hostel id", 400);
+        }
+
         // At least one of tenantId, allocationId, or bookingId must be provided
         if (!tenantId && !allocationId && !bookingId) {
             return errorResponse(
@@ -45,8 +117,13 @@ const recordPayment = async (req, res) => {
             );
         }
 
-        if (amount <= 0) {
+        if (Number(amount) <= 0) {
             return errorResponse(res, "Amount must be greater than 0", 400);
+        }
+
+        const hostelAccess = await ensureHostelAccess(req, parsedHostelId);
+        if (!hostelAccess.ok) {
+            return errorResponse(res, hostelAccess.message, hostelAccess.status);
         }
 
         // Check if tenant exists (if provided)
@@ -70,6 +147,10 @@ const recordPayment = async (req, res) => {
             if (!booking) {
                 return errorResponse(res, "Booking not found", 404);
             }
+
+            if (booking.hostelId && booking.hostelId !== parsedHostelId) {
+                return errorResponse(res, "Booking does not belong to the selected hostel", 400);
+            }
         }
 
         // Check if receipt number already exists
@@ -83,13 +164,23 @@ const recordPayment = async (req, res) => {
             }
         }
 
+        if (allocationId) {
+            const allocationAccess = await ensureAllocationAccess(req, parseInt(allocationId));
+            if (!allocationAccess.ok) {
+                return errorResponse(res, allocationAccess.message, allocationAccess.status);
+            }
+            if (allocationAccess.allocation.hostelId !== parsedHostelId) {
+                return errorResponse(res, "Allocation does not belong to the selected hostel", 400);
+            }
+        }
+
         // Use transaction to update tenant totals and booking status
         const payment = await prisma.$transaction(async (tx) => {
             // Create payment
             const newPayment = await tx.payment.create({
                 data: {
                     tenant: tenantId ? { connect: { id: parseInt(tenantId) } } : undefined,
-                    hostel: hostelId ? { connect: { id: parseInt(hostelId) } } : undefined,
+                    hostel: { connect: { id: parsedHostelId } },
                     allocation: allocationId ? { connect: { id: parseInt(allocationId) } } : undefined,
                     booking: bookingId ? { connect: { id: parseInt(bookingId) } } : undefined,
                     collector: req.userId ? { connect: { id: parseInt(req.userId) } } : undefined,
@@ -272,16 +363,44 @@ const getAllPayments = async (req, res) => {
             limit = 20
         } = req.query;
 
+        const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+        const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+        const skip = (pageNum - 1) * limitNum;
+
         // Build filter
         const where = {};
-        if (tenantId) where.tenantId = parseInt(tenantId);
-        if (hostelId) where.hostelId = parseInt(hostelId);
-        if (allocationId) where.allocationId = parseInt(allocationId);
-        if (bookingId) where.bookingId = parseInt(bookingId);
+        if (tenantId) where.tenantId = parseInt(tenantId, 10);
+        if (allocationId) where.allocationId = parseInt(allocationId, 10);
+        if (bookingId) where.bookingId = parseInt(bookingId, 10);
         if (paymentType) where.paymentType = paymentType;
         if (paymentMethod) where.paymentMethod = paymentMethod;
         if (status) where.status = status;
         if (forMonth) where.forMonth = forMonth;
+
+        const hostelScope = buildHostelScopeFilter(req);
+        if (hostelId) {
+            const parsedHostelId = parseInt(hostelId, 10);
+            if (Number.isNaN(parsedHostelId)) {
+                return errorResponse(res, "Invalid hostel id", 400);
+            }
+            const access = await ensureHostelAccess(req, parsedHostelId);
+            if (!access.ok) {
+                return errorResponse(res, access.message, access.status);
+            }
+            where.hostelId = parsedHostelId;
+        } else if (Object.keys(hostelScope).length) {
+            where.hostel = hostelScope;
+        }
+
+        if (tenantId && Object.keys(hostelScope).length) {
+            where.tenant = {
+                allocations: {
+                    some: {
+                        hostel: hostelScope
+                    }
+                }
+            };
+        }
 
         // Date range filter
         if (startDate || endDate) {
@@ -289,9 +408,6 @@ const getAllPayments = async (req, res) => {
             if (startDate) where.paymentDate.gte = new Date(startDate);
             if (endDate) where.paymentDate.lte = new Date(endDate);
         }
-
-        // Pagination
-        const skip = (page - 1) * limit;
 
         const [payments, total] = await Promise.all([
             prisma.payment.findMany({
@@ -330,8 +446,8 @@ const getAllPayments = async (req, res) => {
                     }
                 },
                 orderBy: { paymentDate: 'desc' },
-                take: parseInt(limit),
-                skip: skip
+                take: limitNum,
+                skip
             }),
             prisma.payment.count({ where })
         ]);
@@ -347,9 +463,9 @@ const getAllPayments = async (req, res) => {
             totalAmount: totals._sum.amount || 0,
             pagination: {
                 total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                pages: Math.ceil(total / limit)
+                page: pageNum,
+                limit: limitNum,
+                pages: Math.ceil(total / limitNum)
             }
         }, "Payments retrieved successfully", 200);
     } catch (err) {
@@ -377,7 +493,7 @@ const getPaymentById = async (req, res) => {
                         address: true
                     }
                 },
-                hostel: { select: { name: true, address: true } },
+                hostel: { select: { id: true, name: true, address: true, ownerId: true, managedBy: true } },
                 allocation: {
                     select: {
                         bed: { select: { bedNumber: true } },
@@ -422,6 +538,14 @@ const getPaymentById = async (req, res) => {
             return errorResponse(res, "Payment not found", 404);
         }
 
+        if (req.userRole === 'owner' && payment.hostel?.ownerId !== req.userId) {
+            return errorResponse(res, "Payment not found", 404);
+        }
+
+        if (req.userRole === 'manager' && payment.hostel?.managedBy !== req.userId) {
+            return errorResponse(res, "Payment not found", 404);
+        }
+
         return successResponse(res, payment, "Payment retrieved successfully", 200);
     } catch (err) {
         console.error("Get Payment Error:", err);
@@ -448,8 +572,18 @@ const updatePayment = async (req, res) => {
         if (updates.remarks !== undefined) updateData.remarks = updates.remarks;
         if (updates.attachments !== undefined) updateData.attachments = updates.attachments;
 
+        const paymentId = parseInt(id, 10);
+        if (Number.isNaN(paymentId)) {
+            return errorResponse(res, "Invalid payment id", 400);
+        }
+
+        const paymentAccess = await ensurePaymentAccess(req, paymentId);
+        if (!paymentAccess) {
+            return errorResponse(res, "Payment not found", 404);
+        }
+
         const payment = await prisma.payment.update({
-            where: { id: parseInt(id) },
+            where: { id: paymentId },
             data: updateData,
             include: {
                 tenant: { select: { name: true } },
@@ -473,10 +607,19 @@ const updatePayment = async (req, res) => {
 const deletePayment = async (req, res) => {
     try {
         const { id } = req.params;
+        const paymentId = parseInt(id, 10);
 
-        // Get payment details first
-        const payment = await prisma.payment.findUnique({
-            where: { id: parseInt(id) }
+        if (Number.isNaN(paymentId)) {
+            return errorResponse(res, "Invalid payment id", 400);
+        }
+
+        const payment = await prisma.payment.findFirst({
+            where: req.userRole === 'admin' || req.userRole === 'staff'
+                ? { id: paymentId }
+                : {
+                    id: paymentId,
+                    hostel: buildHostelScopeFilter(req)
+                }
         });
 
         if (!payment) {
@@ -487,7 +630,7 @@ const deletePayment = async (req, res) => {
         await prisma.$transaction(async (tx) => {
             // Delete payment
             await tx.payment.delete({
-                where: { id: parseInt(id) }
+                where: { id: paymentId }
             });
 
             // Update tenant's totalPaid
@@ -521,10 +664,24 @@ const deletePayment = async (req, res) => {
 // ===================================
 const getPaymentSummary = async (req, res) => {
     try {
-        const { hostelId, startDate, endDate, groupBy = 'month' } = req.query;
+        const { hostelId, startDate, endDate } = req.query;
 
         const where = {};
-        if (hostelId) where.hostelId = parseInt(hostelId);
+        const hostelScope = buildHostelScopeFilter(req);
+
+        if (hostelId) {
+            const parsedHostelId = parseInt(hostelId, 10);
+            if (Number.isNaN(parsedHostelId)) {
+                return errorResponse(res, "Invalid hostel id", 400);
+            }
+            const access = await ensureHostelAccess(req, parsedHostelId);
+            if (!access.ok) {
+                return errorResponse(res, access.message, access.status);
+            }
+            where.hostelId = parsedHostelId;
+        } else if (Object.keys(hostelScope).length) {
+            where.hostel = hostelScope;
+        }
 
         // Date range filter
         if (startDate || endDate) {
@@ -600,7 +757,20 @@ const getPendingPayments = async (req, res) => {
 
         // Get all active allocations
         const where = { status: 'active' };
-        if (hostelId) where.hostelId = parseInt(hostelId);
+        const hostelScope = buildHostelScopeFilter(req);
+        if (hostelId) {
+            const parsedHostelId = parseInt(hostelId, 10);
+            if (Number.isNaN(parsedHostelId)) {
+                return errorResponse(res, "Invalid hostel id", 400);
+            }
+            const access = await ensureHostelAccess(req, parsedHostelId);
+            if (!access.ok) {
+                return errorResponse(res, access.message, access.status);
+            }
+            where.hostelId = parsedHostelId;
+        } else if (Object.keys(hostelScope).length) {
+            where.hostel = hostelScope;
+        }
 
         const activeAllocations = await prisma.allocation.findMany({
             where,
@@ -616,7 +786,7 @@ const getPendingPayments = async (req, res) => {
                 },
                 bed: { select: { bedNumber: true } },
                 room: { select: { roomNumber: true } },
-                hostel: { select: { name: true } },
+                hostel: { select: { id: true, name: true } },
                 payments: {
                     select: {
                         amount: true,

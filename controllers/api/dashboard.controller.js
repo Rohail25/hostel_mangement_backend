@@ -207,7 +207,7 @@ const getDashboardStats = async (req, res) => {
                         id: true,
                         bedNumber: true,
                         status: true,
-                        currentTenant: {
+                        currentUser: {
                             select: {
                                 id: true,
                                 name: true

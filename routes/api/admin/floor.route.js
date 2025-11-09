@@ -17,22 +17,22 @@ const { authenticate, authorize } = require('../../../middleware/auth.middleware
 // All routes require authentication and admin/manager role
 
 // Create floor (Admin & Manager only)
-router.post('/floor', authenticate, authorize('admin', 'manager'), createFloor);
+router.post('/floor', authenticate, authorize('admin', 'manager', 'owner'), createFloor);
 
 // Get all floors (Admin & Manager only)
-router.get('/floors', authenticate, authorize('admin', 'manager'), getAllFloors);
+router.get('/floors', authenticate, authorize('admin', 'manager', 'owner'), getAllFloors);
 
 // Get floors by hostel (Admin & Manager only)
-router.get('/floors/hostel/:hostelId', authenticate, authorize('admin', 'manager'), getFloorsByHostel);
+router.get('/floors/hostel/:hostelId', authenticate, authorize('admin', 'manager', 'owner'), getFloorsByHostel);
 
 // Get floor by ID (Admin & Manager only)
-router.get('/floor/:id', authenticate, authorize('admin', 'manager'), getFloorById);
+router.get('/floor/:id', authenticate, authorize('admin', 'manager', 'owner'), getFloorById);
 
 // Update floor (Admin & Manager only)
-router.put('/floor/:id', authenticate, authorize('admin', 'manager'), updateFloor);
+router.put('/floor/:id', authenticate, authorize('admin', 'manager', 'owner'), updateFloor);
 
 // Delete floor (Admin only)
-router.delete('/floor/:id', authenticate, authorize('admin'), deleteFloor);
+router.delete('/floor/:id', authenticate, authorize('admin', 'owner'), deleteFloor);
 
 module.exports = router;
 

@@ -2,6 +2,45 @@ const { successResponse, errorResponse } = require('../../Helper/helper');
 const { prisma } = require('../../config/db');
 const path = require('path');
 
+const buildHostelScopeFilter = (req) => {
+  if (req.userRole === 'owner') {
+    return { ownerId: req.userId };
+  }
+  if (req.userRole === 'manager') {
+    return { managedBy: req.userId };
+  }
+  return {};
+};
+
+const buildTenantAccessFilter = (req) => {
+  const hostelFilter = buildHostelScopeFilter(req);
+  if (!Object.keys(hostelFilter).length) return {};
+  return {
+    allocations: {
+      some: {
+        hostel: hostelFilter,
+      },
+    },
+  };
+};
+
+const ensureTenantAccess = async (req, tenantId) => {
+  if (req.userRole === 'admin' || req.userRole === 'staff') {
+    return prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+  }
+
+  return prisma.tenant.findFirst({
+    where: {
+      id: tenantId,
+      ...buildTenantAccessFilter(req),
+    },
+    select: { id: true },
+  });
+};
+
 // ======================================================
 // CREATE TENANT
 // ======================================================
@@ -101,10 +140,23 @@ const createTenant = async (req, res) => {
 const updateTenant = async (req, res) => {
   try {
     const { id } = req.params;
+    const tenantId = parseInt(id, 10);
+
+    if (Number.isNaN(tenantId)) {
+      return errorResponse(res, "Invalid tenant id", 400);
+    }
+
     const updates = req.body;
 
-    const existingTenant = await prisma.tenant.findUnique({ where: { id: parseInt(id) } });
+    const existingTenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!existingTenant) return errorResponse(res, "Tenant not found", 404);
+
+    if (req.userRole !== 'admin' && req.userRole !== 'staff') {
+      const canAccess = await ensureTenantAccess(req, tenantId);
+      if (!canAccess) {
+        return errorResponse(res, "Tenant not found", 404);
+      }
+    }
 
     // ✅ Handle uploaded files
     const profilePhoto = req.files?.profilePhoto?.[0]
@@ -152,7 +204,7 @@ const updateTenant = async (req, res) => {
     };
 
     const tenant = await prisma.tenant.update({
-      where: { id: parseInt(id) },
+      where: { id: tenantId },
       data: updateData
     });
 
@@ -170,19 +222,25 @@ const getAllTenants = async (req, res) => {
   try {
     const { status, search, page = 1, limit = 20 } = req.query;
 
-    const where = {};
-    if (status) where.status = status;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = {
+      ...buildTenantAccessFilter(req),
+    };
+
+    if (status) where.status = String(status);
+
     if (search) {
       where.OR = [
-        { firstName: { contains: search } },
-        { lastName: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-        { cnicNumber: { contains: search } }
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { cnicNumber: { contains: search, mode: 'insensitive' } },
       ];
     }
-
-    const skip = (page - 1) * limit;
 
     const [tenants, total] = await Promise.all([
       prisma.tenant.findMany({
@@ -193,27 +251,31 @@ const getAllTenants = async (req, res) => {
             include: {
               bed: { select: { bedNumber: true } },
               room: { select: { roomNumber: true } },
-              hostel: { select: { name: true } }
-            }
+              hostel: { select: { id: true, name: true } },
+            },
           },
-          _count: { select: { payments: true, allocations: true } }
+          _count: { select: { payments: true, allocations: true } },
         },
         orderBy: { createdAt: 'desc' },
-        take: parseInt(limit),
-        skip
+        take: limitNum,
+        skip,
       }),
-      prisma.tenant.count({ where })
+      prisma.tenant.count({ where }),
     ]);
 
-    return successResponse(res, {
-      tenants,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      }
-    }, "Tenants retrieved successfully");
+    return successResponse(
+      res,
+      {
+        tenants,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+      "Tenants retrieved successfully"
+    );
   } catch (err) {
     console.error("Get All Tenants Error:", err);
     return errorResponse(res, err.message);
@@ -226,15 +288,27 @@ const getAllTenants = async (req, res) => {
 const deleteTenant = async (req, res) => {
   try {
     const { id } = req.params;
+    const tenantId = parseInt(id, 10);
+
+    if (Number.isNaN(tenantId)) {
+      return errorResponse(res, "Invalid tenant id", 400);
+    }
+
+    if (req.userRole !== 'admin' && req.userRole !== 'staff') {
+      const canAccess = await ensureTenantAccess(req, tenantId);
+      if (!canAccess) {
+        return errorResponse(res, "Tenant not found", 404);
+      }
+    }
 
     const activeAllocation = await prisma.allocation.findFirst({
-      where: { tenantId: parseInt(id), status: 'active' }
+      where: { tenantId, status: 'active' }
     });
 
     if (activeAllocation)
       return errorResponse(res, "Cannot delete tenant with active allocations.", 400);
 
-    await prisma.tenant.delete({ where: { id: parseInt(id) } });
+    await prisma.tenant.delete({ where: { id: tenantId } });
     return successResponse(res, null, "Tenant deleted successfully");
   } catch (err) {
     console.error("Delete Tenant Error:", err);
@@ -254,8 +328,11 @@ const getTenantById = async (req, res) => {
       return errorResponse(res, "Invalid tenant id", 400);
     }
 
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
+    const tenant = await prisma.tenant.findFirst({
+      where: {
+        id: tenantId,
+        ...buildTenantAccessFilter(req),
+      },
       include: {
         user: {
           select: {
@@ -323,9 +400,21 @@ const getTenantPaymentHistory = async (req, res) => {
     const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
     const skip = (pageNum - 1) * limitNum;
 
-    const where = { tenantId };
+    const tenantAccess = await ensureTenantAccess(req, tenantId);
+    if (!tenantAccess) {
+      return errorResponse(res, "Tenant not found", 404);
+    }
+
+    const hostelFilter = buildHostelScopeFilter(req);
+
+    const where = {
+      tenantId,
+    };
     if (status) {
-      where.status = status;
+      where.status = String(status);
+    }
+    if (Object.keys(hostelFilter).length) {
+      where.hostel = hostelFilter;
     }
 
     const [payments, total] = await Promise.all([
@@ -387,8 +476,11 @@ const getTenantFinancialSummary = async (req, res) => {
       return errorResponse(res, "Invalid tenant id", 400);
     }
 
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
+    const tenant = await prisma.tenant.findFirst({
+      where: {
+        id: tenantId,
+        ...buildTenantAccessFilter(req),
+      },
       select: {
         id: true,
         name: true,
@@ -405,19 +497,24 @@ const getTenantFinancialSummary = async (req, res) => {
       return errorResponse(res, "Tenant not found", 404);
     }
 
+    const hostelFilter = buildHostelScopeFilter(req);
+    const paymentWhere = Object.keys(hostelFilter).length
+      ? { tenantId, hostel: hostelFilter }
+      : { tenantId };
+
     const [paidAggregate, pendingAggregate, recentPayment] = await Promise.all([
       prisma.payment.aggregate({
-        where: { tenantId, status: 'paid' },
+        where: { ...paymentWhere, status: 'paid' },
         _sum: { amount: true },
         _count: { _all: true }
       }),
       prisma.payment.aggregate({
-        where: { tenantId, status: { in: ['pending', 'partial', 'overdue'] } },
+        where: { ...paymentWhere, status: { in: ['pending', 'partial', 'overdue'] } },
         _sum: { amount: true },
         _count: { _all: true }
       }),
       prisma.payment.findFirst({
-        where: { tenantId },
+        where: paymentWhere,
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -456,14 +553,15 @@ const getActiveTenants = async (req, res) => {
     const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
     const where = {
-      status: 'active'
+      status: 'active',
+      ...buildTenantAccessFilter(req),
     };
 
     if (search) {
       where.OR = [
-        { name: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } }
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } }
       ];
     }
 

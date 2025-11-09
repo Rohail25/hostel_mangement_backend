@@ -5,6 +5,86 @@
 const { successResponse, errorResponse } = require('../../Helper/helper');
 const { prisma } = require('../../config/db');
 
+const getHostelAccessFilter = (req) => {
+    if (req.userRole === 'owner') {
+        return { ownerId: req.userId };
+    }
+    if (req.userRole === 'manager') {
+        return { managedBy: req.userId };
+    }
+    return {};
+};
+
+const assertHostelAccess = async (req, hostelId) => {
+    const hostel = await prisma.hostel.findUnique({
+        where: { id: hostelId },
+        select: { id: true, ownerId: true, managedBy: true }
+    });
+
+    if (!hostel) {
+        return { ok: false, status: 404, message: "Hostel not found" };
+    }
+
+    if (req.userRole === 'owner' && hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    if (req.userRole === 'manager' && hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this hostel" };
+    }
+
+    return { ok: true, hostel };
+};
+
+const assertFloorAccess = async (req, floorId) => {
+    const floor = await prisma.floor.findUnique({
+        where: { id: floorId },
+        include: {
+            hostel: {
+                select: { id: true, ownerId: true, managedBy: true }
+            }
+        }
+    });
+
+    if (!floor) {
+        return { ok: false, status: 404, message: "Floor not found" };
+    }
+
+    if (req.userRole === 'owner' && floor.hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this floor" };
+    }
+
+    if (req.userRole === 'manager' && floor.hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this floor" };
+    }
+
+    return { ok: true, floor };
+};
+
+const assertRoomAccess = async (req, roomId) => {
+    const room = await prisma.room.findUnique({
+        where: { id: roomId },
+        include: {
+            hostel: { select: { id: true, ownerId: true, managedBy: true } },
+            floor: { select: { id: true, hostelId: true } }
+        }
+    });
+
+    if (!room) {
+        return { ok: false, status: 404, message: "Room not found" };
+    }
+
+    if (req.userRole === 'owner' && room.hostel.ownerId !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this room" };
+    }
+
+    if (req.userRole === 'manager' && room.hostel.managedBy !== req.userId) {
+        return { ok: false, status: 403, message: "You are not allowed to manage this room" };
+    }
+
+    return { ok: true, room };
+};
+
 // ===================================
 // CREATE ROOM
 // ===================================
@@ -22,25 +102,53 @@ const createRoom = async (req, res) => {
             furnishing,
         } = req.body;
 
+        const hostelId = parseInt(hostel, 10);
+        const floorId = parseInt(floor, 10);
+
         // Validation
-        if (!hostel || !floor || !roomNumber || !roomType || !totalBeds || pricePerBed === undefined) {
+        if (!Number.isFinite(hostelId) || !Number.isFinite(floorId) || !roomNumber || !roomType || !totalBeds || pricePerBed === undefined) {
             return errorResponse(res, "Hostel, floor, room number, room type, total beds, and price are required", 400);
+        }
+
+        const totalBedsValue = Number(totalBeds);
+        const pricePerBedValue = Number(pricePerBed);
+
+        if (!Number.isFinite(totalBedsValue) || totalBedsValue <= 0) {
+            return errorResponse(res, "Invalid total beds", 400);
+        }
+
+        if (!Number.isFinite(pricePerBedValue) || pricePerBedValue < 0) {
+            return errorResponse(res, "Invalid price per bed", 400);
         }
 
         // Check if floor exists
         const floorExists = await prisma.floor.findUnique({
-            where: { id: floor }
+            where: { id: floorId },
+            include: {
+                hostel: {
+                    select: { id: true }
+                }
+            }
         });
         
         if (!floorExists) {
             return errorResponse(res, "Floor not found", 404);
         }
 
+        if (floorExists.hostelId !== hostelId) {
+            return errorResponse(res, "Floor does not belong to the provided hostel", 400);
+        }
+
+        const access = await assertFloorAccess(req, floorId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         // Check if room number already exists for this hostel
         const existingRoom = await prisma.room.findUnique({
             where: {
                 hostelId_roomNumber: {
-                    hostelId: hostel,
+                    hostelId: hostelId,
                     roomNumber: roomNumber
                 }
             }
@@ -53,12 +161,12 @@ const createRoom = async (req, res) => {
         // Create room
         const room = await prisma.room.create({
             data: {
-                hostelId: hostel,
-                floorId: floor,
+                hostelId: hostelId,
+                floorId: floorId,
                 roomNumber,
                 roomType,
-                totalBeds,
-                pricePerBed,
+                totalBeds: totalBedsValue,
+                pricePerBed: pricePerBedValue,
                 amenities: amenities || [],
                 // dimensions: dimensions ? {
                 //     length: dimensions.length || null,
@@ -83,17 +191,17 @@ const createRoom = async (req, res) => {
         // Update floor and hostel counts
         await Promise.all([
             prisma.floor.update({
-                where: { id: floor },
+                where: { id: floorId },
                 data: {
                     totalRooms: { increment: 1 },
-                    totalBeds: { increment: totalBeds }
+                    totalBeds: { increment: totalBedsValue }
                 }
             }),
             prisma.hostel.update({
-                where: { id: hostel },
+                where: { id: hostelId },
                 data: {
                     totalRooms: { increment: 1 },
-                    totalBeds: { increment: totalBeds }
+                    totalBeds: { increment: totalBedsValue }
                 }
             })
         ]);
@@ -112,15 +220,35 @@ const getAllRooms = async (req, res) => {
     try {
         const { hostel, floor, status, roomType, page = 1, limit = 20 } = req.query;
 
+        const pageNumber = parseInt(page, 10) || 1;
+        const limitNumber = parseInt(limit, 10) || 20;
+
         // Build filter
         const where = {};
-        if (hostel) where.hostelId = hostel;
-        if (floor) where.floorId = floor;
+        if (hostel) {
+            const hostelId = parseInt(hostel, 10);
+            if (!Number.isFinite(hostelId)) {
+                return errorResponse(res, "Invalid hostel id", 400);
+            }
+            where.hostelId = hostelId;
+        }
+        if (floor) {
+            const floorId = parseInt(floor, 10);
+            if (!Number.isFinite(floorId)) {
+                return errorResponse(res, "Invalid floor id", 400);
+            }
+            where.floorId = floorId;
+        }
         if (status) where.status = status;
         if (roomType) where.roomType = roomType;
 
+        const hostelAccessFilter = getHostelAccessFilter(req);
+        if (Object.keys(hostelAccessFilter).length > 0) {
+            where.hostel = hostelAccessFilter;
+        }
+
         // Pagination
-        const skip = (page - 1) * limit;
+        const skip = (pageNumber - 1) * limitNumber;
 
         const [rooms, total] = await Promise.all([
             prisma.room.findMany({
@@ -134,7 +262,7 @@ const getAllRooms = async (req, res) => {
                     }
                 },
                 orderBy: { roomNumber: 'asc' },
-                take: parseInt(limit),
+                take: limitNumber,
                 skip: skip
             }),
             prisma.room.count({ where })
@@ -144,9 +272,9 @@ const getAllRooms = async (req, res) => {
             rooms,
             pagination: {
                 total,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                pages: Math.ceil(total / limit)
+                page: pageNumber,
+                limit: limitNumber,
+                pages: Math.ceil(total / limitNumber)
             }
         }, "Rooms retrieved successfully", 200);
     } catch (err) {
@@ -163,6 +291,15 @@ const getRoomsByHostel = async (req, res) => {
         const { hostelId } = req.params;
         const { status } = req.query;
         const convertedHostelId = parseInt(hostelId,10);
+        if (!Number.isFinite(convertedHostelId)) {
+            return errorResponse(res, "Invalid hostel id", 400);
+        }
+
+        const access = await assertHostelAccess(req, convertedHostelId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const where = { hostelId: convertedHostelId };
         if (status) where.status = status;
 
@@ -193,6 +330,15 @@ const getRoomsByFloor = async (req, res) => {
     try {
         const { floorId } = req.params;
         const convertedFloorId = parseInt(floorId,10);
+        if (!Number.isFinite(convertedFloorId)) {
+            return errorResponse(res, "Invalid floor id", 400);
+        }
+
+        const access = await assertFloorAccess(req, convertedFloorId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const rooms = await prisma.room.findMany({
             where: { floorId: convertedFloorId },
             include: {
@@ -218,6 +364,11 @@ const getRoomById = async (req, res) => {
         const { id } = req.params;
         const roomId = parseInt(id,10);
 
+        const access = await assertRoomAccess(req, roomId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const room = await prisma.room.findUnique({
             where: { id: roomId },
             include: {
@@ -230,15 +381,11 @@ const getRoomById = async (req, res) => {
             }
         });
 
-        if (!room) {
-            return errorResponse(res, "Room not found", 404);
-        }
-
         // Get beds in this room
         const beds = await prisma.bed.findMany({
             where: { roomId: roomId },
             include: {
-                currentTenant: {
+                currentUser: {
                     select: { name: true, email: true, phone: true }
                 }
             }
@@ -267,6 +414,11 @@ const updateRoom = async (req, res) => {
         const updates = req.body;
         const roomId = parseInt(id,10);
 
+        const access = await assertRoomAccess(req, roomId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         // Remove fields that shouldn't be updated directly
         delete updates.hostel;
         delete updates.hostelId;
@@ -274,20 +426,26 @@ const updateRoom = async (req, res) => {
         delete updates.floorId;
         delete updates.occupiedBeds;
 
-        const oldRoom = await prisma.room.findUnique({
-            where: { id: roomId }
-        });
-        
-        if (!oldRoom) {
-            return errorResponse(res, "Room not found", 404);
-        }
+        const oldRoom = access.room;
 
         // Prepare update data
         const updateData = {};
         if (updates.roomNumber) updateData.roomNumber = updates.roomNumber;
         if (updates.roomType) updateData.roomType = updates.roomType;
-        if (updates.totalBeds !== undefined) updateData.totalBeds = updates.totalBeds;
-        if (updates.pricePerBed !== undefined) updateData.pricePerBed = updates.pricePerBed;
+        if (updates.totalBeds !== undefined) {
+            const newTotalBeds = Number(updates.totalBeds);
+            if (!Number.isFinite(newTotalBeds) || newTotalBeds < 0) {
+                return errorResponse(res, "Invalid total beds", 400);
+            }
+            updateData.totalBeds = newTotalBeds;
+        }
+        if (updates.pricePerBed !== undefined) {
+            const newPrice = Number(updates.pricePerBed);
+            if (!Number.isFinite(newPrice) || newPrice < 0) {
+                return errorResponse(res, "Invalid price per bed", 400);
+            }
+            updateData.pricePerBed = newPrice;
+        }
         if (updates.status) updateData.status = updates.status;
         if (updates.amenities) updateData.amenities = updates.amenities;
         if (updates.hasAttachedBathroom !== undefined) updateData.hasAttachedBathroom = updates.hasAttachedBathroom;
@@ -318,8 +476,8 @@ const updateRoom = async (req, res) => {
         });
 
         // If total beds changed, update floor and hostel counts
-        if (updates.totalBeds && updates.totalBeds !== oldRoom.totalBeds) {
-            const difference = updates.totalBeds - oldRoom.totalBeds;
+        if (updateData.totalBeds !== undefined && updateData.totalBeds !== oldRoom.totalBeds) {
+            const difference = updateData.totalBeds - oldRoom.totalBeds;
             
             await Promise.all([
                 prisma.floor.update({
@@ -357,6 +515,11 @@ const updateRoomStatus = async (req, res) => {
             return errorResponse(res, "Invalid status", 400);
         }
 
+        const access = await assertRoomAccess(req, roomId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         const room = await prisma.room.update({
             where: { id: roomId },
             data: { status },
@@ -392,9 +555,19 @@ const scheduleMaintenance = async (req, res) => {
             return errorResponse(res, "Date and description are required", 400);
         }
 
+        const roomId = parseInt(id, 10);
+        if (!Number.isFinite(roomId)) {
+            return errorResponse(res, "Invalid room id", 400);
+        }
+
+        const access = await assertRoomAccess(req, roomId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
+
         // Get current room data
         const currentRoom = await prisma.room.findUnique({
-            where: { id }
+            where: { id: roomId }
         });
 
         if (!currentRoom) {
@@ -412,7 +585,7 @@ const scheduleMaintenance = async (req, res) => {
         ];
 
         const room = await prisma.room.update({
-            where: { id },
+            where: { id: roomId },
             data: {
                 maintenanceSchedule: updatedSchedule
             }
@@ -431,9 +604,18 @@ const scheduleMaintenance = async (req, res) => {
 const deleteRoom = async (req, res) => {
     try {
         const { id } = req.params;
+        const roomId = parseInt(id, 10);
+        if (!Number.isFinite(roomId)) {
+            return errorResponse(res, "Invalid room id", 400);
+        }
+
+        const access = await assertRoomAccess(req, roomId);
+        if (!access.ok) {
+            return errorResponse(res, access.message, access.status);
+        }
 
         const room = await prisma.room.findUnique({
-            where: { id }
+            where: { id: roomId }
         });
         
         if (!room) {
@@ -441,7 +623,7 @@ const deleteRoom = async (req, res) => {
         }
 
         // Check if room has any beds
-        const bedCount = await prisma.bed.count({ where: { roomId: id } });
+        const bedCount = await prisma.bed.count({ where: { roomId: roomId } });
         if (bedCount > 0) {
             return errorResponse(
                 res,
@@ -451,7 +633,7 @@ const deleteRoom = async (req, res) => {
         }
 
         await prisma.room.delete({
-            where: { id }
+            where: { id: roomId }
         });
 
         // Update floor and hostel counts

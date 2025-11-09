@@ -62,7 +62,13 @@ const hostelSchema = new mongoose.Schema(
         },
         managedBy: {
             type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
+            ref: 'User',
+            default: null
+        },
+        owner: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null
         },
         images: [{
             url: { type: String },
@@ -77,6 +83,8 @@ const hostelSchema = new mongoose.Schema(
 // Indexes for better query performance
 hostelSchema.index({ name: 1 });
 hostelSchema.index({ status: 1 });
+hostelSchema.index({ owner: 1 });
+hostelSchema.index({ managedBy: 1 });
 hostelSchema.index({ 'address.city': 1 });
 
 module.exports = mongoose.model('Hostel', hostelSchema);

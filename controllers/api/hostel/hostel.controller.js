@@ -5,10 +5,28 @@ const { successResponse, errorResponse } = require('../../../Helper/helper');
  * =====================================================
  * HOSTEL CONTROLLER - Hostel Management Dashboard
  * =====================================================
- * 
+ *
  * Provides hostel listing, details, and architecture
  * for the Hostel Management dashboard
  */
+
+const buildHostelAccessFilter = (req) => {
+  if (req.userRole === 'owner') {
+    return { ownerId: req.userId };
+  }
+  if (req.userRole === 'manager') {
+    return { managedBy: req.userId };
+  }
+  return {};
+};
+
+const ensureHostelAccess = async (req, hostelId) => {
+  const where = { id: hostelId, ...buildHostelAccessFilter(req) };
+  return prisma.hostel.findFirst({
+    where,
+    select: { id: true },
+  });
+};
 
 // Helper function to parse JSON fields
 const parseJsonField = (field) => {
@@ -34,7 +52,7 @@ const getAllHostels = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // Build filter
-    const where = {};
+    const where = { ...buildHostelAccessFilter(req) };
     if (status) where.status = status;
 
     // Search filter - search by name, city, or manager
@@ -150,8 +168,8 @@ const getHostelById = async (req, res) => {
     const { id } = req.params;
     const hostelId = parseInt(id, 10);
 
-    const hostel = await prisma.hostel.findUnique({
-      where: { id: hostelId },
+    const hostel = await prisma.hostel.findFirst({
+      where: { id: hostelId, ...buildHostelAccessFilter(req) },
       include: {
         manager: {
           select: {
@@ -237,8 +255,8 @@ const getHostelArchitecture = async (req, res) => {
     const { id } = req.params;
     const hostelId = parseInt(id, 10);
 
-    const hostel = await prisma.hostel.findUnique({
-      where: { id: hostelId },
+    const hostel = await prisma.hostel.findFirst({
+      where: { id: hostelId, ...buildHostelAccessFilter(req) },
       select: {
         id: true,
         name: true,
@@ -255,23 +273,30 @@ const getHostelArchitecture = async (req, res) => {
         hostelId: hostelId,
         status: 'active',
       },
-      include: {
+      select: {
+        id: true,
+        floorNumber: true,
+        floorName: true,
+        status: true,
         rooms: {
-          include: {
+          select: {
+            id: true,
+            roomNumber: true,
+            status: true,
             beds: {
               select: {
                 id: true,
-                number: true,
+                bedNumber: true,
                 status: true,
                 currentUserId: true,
               },
-              orderBy: { number: 'asc' },
+              orderBy: { bedNumber: 'asc' },
             },
           },
-          orderBy: { number: 'asc' },
+          orderBy: { roomNumber: 'asc' },
         },
       },
-      orderBy: { name: 'asc' },
+      orderBy: { floorNumber: 'asc' },
     });
 
     // Calculate overall statistics
@@ -296,15 +321,15 @@ const getHostelArchitecture = async (req, res) => {
         // Format beds for display (A, B, C, D, etc.)
         const formattedBeds = roomBeds.map(bed => ({
           id: bed.id,
-          number: bed.number,
-          label: bed.number, // A, B, C, D, etc.
+          number: bed.bedNumber,
+          label: bed.bedNumber, // A, B, C, D, etc.
           status: bed.status,
           isOccupied: bed.status === 'occupied' || bed.currentUserId !== null,
         }));
 
         return {
           id: room.id,
-          number: room.number,
+          number: room.roomNumber,
           status: room.status,
           totalBeds: roomTotalBeds,
           occupiedBeds: roomOccupiedBeds,
@@ -315,7 +340,7 @@ const getHostelArchitecture = async (req, res) => {
 
       return {
         id: floor.id,
-        name: floor.name,
+        name: floor.floorName || `Floor ${floor.floorNumber}`,
         status: floor.status,
         roomCount: formattedRooms.length,
         rooms: formattedRooms,
@@ -357,6 +382,7 @@ const createHostel = async (req, res) => {
       contactInfo,
       operatingHours,
       images,
+      ownerId,
     } = req.body;
 
     // Validation
@@ -370,6 +396,27 @@ const createHostel = async (req, res) => {
 
     if (hostelExists) {
       return errorResponse(res, 'Hostel already exists', 400);
+    }
+
+    let ownerIdToUse = null;
+    if (req.userRole === 'owner') {
+      ownerIdToUse = req.userId;
+    } else if (ownerId !== undefined && ownerId !== null) {
+      const numericOwnerId = Number(ownerId);
+      if (!Number.isFinite(numericOwnerId)) {
+        return errorResponse(res, 'Invalid owner id', 400);
+      }
+      const ownerUser = await prisma.user.findUnique({
+        where: { id: numericOwnerId },
+        select: { id: true, role: true },
+      });
+      if (!ownerUser) {
+        return errorResponse(res, 'Owner not found', 404);
+      }
+      if (ownerUser.role !== 'owner') {
+        return errorResponse(res, 'Provided user is not an owner', 400);
+      }
+      ownerIdToUse = ownerUser.id;
     }
 
     // Create hostel
@@ -395,10 +442,18 @@ const createHostel = async (req, res) => {
           checkOut: operatingHours.checkOut || '11:00 AM',
         } : null,
         images: images || [],
-        managedBy: req.userId, // From auth middleware
+        managedBy: req.userRole === 'manager' ? req.userId : null,
+        ownerId: ownerIdToUse,
       },
       include: {
         manager: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        owner: {
           select: {
             id: true,
             name: true,
@@ -424,6 +479,10 @@ const updateHostel = async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
     const hostelId = parseInt(id, 10);
+
+    if (!await ensureHostelAccess(req, hostelId)) {
+      return errorResponse(res, 'Hostel not found', 404);
+    }
 
     // Remove fields that shouldn't be updated directly
     delete updates.totalFloors;
@@ -466,11 +525,39 @@ const updateHostel = async (req, res) => {
 
     if (updates.images) updateData.images = updates.images;
 
+    if (req.userRole !== 'owner' && updates.ownerId !== undefined) {
+      if (updates.ownerId === null) {
+        updateData.ownerId = null;
+      } else {
+        const numericOwnerId = Number(updates.ownerId);
+        if (!Number.isFinite(numericOwnerId)) {
+          return errorResponse(res, 'Invalid owner id', 400);
+        }
+        const ownerUser = await prisma.user.findUnique({
+          where: { id: numericOwnerId },
+          select: { id: true, role: true },
+        });
+        if (!ownerUser) {
+          return errorResponse(res, 'Owner not found', 404);
+        }
+        if (ownerUser.role !== 'owner') {
+          return errorResponse(res, 'Provided user is not an owner', 400);
+        }
+        updateData.ownerId = ownerUser.id;
+      }
+    }
+
     const hostel = await prisma.hostel.update({
       where: { id: hostelId },
       data: updateData,
       include: {
         manager: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+        owner: {
           select: {
             name: true,
             email: true,
@@ -497,6 +584,10 @@ const deleteHostel = async (req, res) => {
   try {
     const { id } = req.params;
     const hostelId = parseInt(id, 10);
+
+    if (!await ensureHostelAccess(req, hostelId)) {
+      return errorResponse(res, 'Hostel not found', 404);
+    }
 
     // Check if hostel has any floors/rooms
     const floorCount = await prisma.floor.count({
@@ -534,8 +625,8 @@ const getHostelStats = async (req, res) => {
     const { id } = req.params;
     const hostelId = parseInt(id, 10);
 
-    const hostel = await prisma.hostel.findUnique({
-      where: { id: hostelId },
+    const hostel = await prisma.hostel.findFirst({
+      where: { id: hostelId, ...buildHostelAccessFilter(req) },
     });
 
     if (!hostel) {
@@ -590,4 +681,5 @@ module.exports = {
   getHostelStats,
   getHostelArchitecture,
 };
+
 

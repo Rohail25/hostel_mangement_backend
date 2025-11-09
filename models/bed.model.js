@@ -40,12 +40,12 @@ const bedSchema = new mongoose.Schema(
             enum: ['available', 'occupied', 'reserved', 'under_maintenance'],
             default: 'available'
         },
-        currentTenant: {
+        currentUser: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
             default: null
         },
-        reservedBy: {
+        reservedUser: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
             default: null
@@ -72,7 +72,7 @@ const bedSchema = new mongoose.Schema(
 // Compound index to ensure unique bed number per room
 bedSchema.index({ room: 1, bedNumber: 1 }, { unique: true });
 bedSchema.index({ status: 1 });
-bedSchema.index({ currentTenant: 1 });
+bedSchema.index({ currentUser: 1 });
 
 module.exports = mongoose.model('Bed', bedSchema);
 
