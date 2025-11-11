@@ -59,7 +59,9 @@ const getDashboardStats = async (req, res) => {
                 collector: {
                     select: {
                         id: true,
-                        name: true
+                        username: true,
+                        email: true,
+                        phone: true
                     }
                 }
             },
@@ -158,7 +160,7 @@ const getDashboardStats = async (req, res) => {
                 user: {
                     select: {
                         id: true,
-                        name: true,
+                        username: true,
                         email: true,
                         phone: true,
                         role: true
@@ -207,10 +209,12 @@ const getDashboardStats = async (req, res) => {
                         id: true,
                         bedNumber: true,
                         status: true,
-                        currentUser: {
+                        currentTenant: {
                             select: {
                                 id: true,
-                                name: true
+                                username: true,
+                                email: true,
+                                phone: true
                             }
                         }
                     }

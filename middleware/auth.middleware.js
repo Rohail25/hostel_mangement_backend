@@ -7,6 +7,16 @@ const { errorResponse } = require('../Helper/helper');
 const { prisma } = require('../config/db');
 
 /**
+ * Supported User Roles:
+ * - admin: System administrator with full access
+ * - owner: Property owner with access to their properties
+ * - manager: Property manager with management access
+ * - staff: Staff member with limited access
+ * - user: Regular user/tenant with basic access
+ */
+const VALID_ROLES = ['admin', 'owner', 'manager', 'staff', 'user'];
+
+/**
  * Verify JWT Token Middleware
  * Checks for token in cookies or Authorization header
  */
@@ -35,7 +45,7 @@ const authenticate = async (req, res, next) => {
             where: { id: decoded.id },
             select: {
                 id: true,
-                name: true,
+                username: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -49,9 +59,14 @@ const authenticate = async (req, res, next) => {
             return errorResponse(res, "User not found. Please login again.", 401);
         }
 
-        // Check if user is active
-        if (user.status !== 'active') {
+        // Check if user is active (status defaults to 'active' but can be null)
+        if (user.status && user.status !== 'active') {
             return errorResponse(res, "Your account is inactive. Please contact support.", 403);
+        }
+
+        // Validate user role
+        if (user.role && !VALID_ROLES.includes(user.role)) {
+            console.warn(`Invalid role detected for user ${user.id}: ${user.role}`);
         }
 
         // Attach user to request object
@@ -68,7 +83,10 @@ const authenticate = async (req, res, next) => {
 
 /**
  * Check if user has required role
- * @param {Array} roles - Array of allowed roles
+ * Supports: 'admin', 'owner', 'manager', 'staff', 'user'
+ * @param {...string} roles - Allowed roles (e.g., authorize('admin', 'owner'))
+ * @example
+ * router.get('/route', authenticate, authorize('admin', 'owner'), handler);
  */
 const authorize = (...roles) => {
     return (req, res, next) => {
@@ -76,10 +94,16 @@ const authorize = (...roles) => {
             return errorResponse(res, "Authentication required", 401);
         }
 
+        // Validate that the user's role is valid
+        if (!req.user.role) {
+            return errorResponse(res, "User role not found", 403);
+        }
+
+        // Check if user has one of the required roles
         if (!roles.includes(req.user.role)) {
             return errorResponse(
                 res,
-                `Access denied. This action requires ${roles.join(' or ')} role.`,
+                `Access denied. This action requires ${roles.join(' or ')} role. Your role: ${req.user.role}`,
                 403
             );
         }
@@ -108,7 +132,7 @@ const optionalAuth = async (req, res, next) => {
                 where: { id: decoded.id },
                 select: {
                     id: true,
-                    name: true,
+                    username: true,
                     email: true,
                     phone: true,
                     role: true,

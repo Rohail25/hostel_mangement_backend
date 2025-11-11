@@ -22,7 +22,7 @@ const { authenticate, authorize } = require('../../../middleware/auth.middleware
  */
 router.get('/dashboard', 
     authenticate, 
-    authorize('admin', 'manager'),
+    authorize('admin', 'manager', 'owner'),
     getDashboardStats
 );
 

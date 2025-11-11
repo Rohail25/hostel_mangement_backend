@@ -1,7 +1,9 @@
-// =================== PRISMA CONFIG ===================
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
+  // output   = "../generated/prisma"
 }
 
 datasource db {
@@ -190,6 +192,525 @@ enum AlertPriority {
   urgent
 }
 
+// =================== MODELS ===================
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String?  @db.VarChar(255)
+  email     String?  @unique @db.VarChar(255)
+  phone     String?  @db.VarChar(50)
+  password  String?  @db.VarChar(255)
+  status    String?  @default("active") @db.VarChar(50)
+  role      Role?    @default(user)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  managedHostels    Hostel[]     @relation("HostelManager")
+  tenantProfile     Tenant?      @relation("TenantUser") // If user is also a tenant (online registration)
+  allocatedBy       Allocation[] @relation("AllocationCreator") // Allocations created by this user (admin/staff)
+  currentBeds       Bed[]        @relation("CurrentTenant")
+  reservedBeds      Bed[]        @relation("BedReservation")
+  paymentsCollected Payment[]    @relation("PaymentCollector") // Payments collected by this user
+  employeeProfile   Employee?    @relation("EmployeeUser") // If user is an employee (staff/manager)
+  ownerProfile      Owner?       @relation("OwnerUser") // If user is an owner
+  createdBookings   Booking[]    @relation("BookingCreator") // Bookings created by this user
+  assignedAlerts    Alert[]      @relation("AlertAssignedTo") // Alerts assigned to this user
+  createdAlerts     Alert[]      @relation("AlertCreator") // Alerts created by this user
+  resolvedAlerts    Alert[]      @relation("AlertResolver") // Alerts resolved by this user
+
+  @@index([email])
+  @@index([role])
+}
+
+model Hostel {
+  id             Int          @id @default(autoincrement())
+  name           String?      @unique @db.VarChar(255)
+  address        Json? // { street, city, state, country, zipCode }
+  description    String?      @db.Text
+  totalFloors    Int?         @default(0)
+  totalRooms     Int?         @default(0)
+  totalBeds      Int?         @default(0)
+  occupiedBeds   Int?         @default(0)
+  amenities      Json? // Array of strings
+  contactInfo    Json? // { phone, email, emergencyContact }
+  operatingHours Json? // { checkIn, checkOut }
+  status         HostelStatus @default(active)
+  managedBy      Int?
+  ownerId        Int? // Owner of the hostel
+  images         Json? // Array of { url, caption }
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Relations
+  manager      User?         @relation("HostelManager", fields: [managedBy], references: [id], onDelete: SetNull)
+  owner        Owner?        @relation("HostelOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  floors       Floor[]
+  rooms        Room[]
+  allocations  Allocation[]
+  payments     Payment[]
+  transactions Transaction[]
+  bookings     Booking[]
+  alerts       Alert[]
+  vendors      Vendor[]
+
+  @@index([name])
+  @@index([status])
+  @@index([managedBy])
+  @@index([ownerId])
+}
+
+model Floor {
+  id           Int         @id @default(autoincrement())
+  hostelId     Int
+  floorNumber  Int
+  floorName    String?     @db.VarChar(255)
+  description  String?     @db.Text
+  totalRooms   Int         @default(0)
+  totalBeds    Int         @default(0)
+  occupiedBeds Int         @default(0)
+  amenities    Json? // Array of strings
+  floorPlan    String?     @db.VarChar(500)
+  status       FloorStatus @default(active)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relations
+  hostel      Hostel       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  rooms       Room[]
+  allocations Allocation[]
+
+  @@unique([hostelId, floorNumber])
+  @@index([status])
+  @@index([hostelId])
+}
+
+model Room {
+  id                  Int        @id @default(autoincrement())
+  hostelId            Int
+  floorId             Int
+  roomNumber          String     @db.VarChar(50)
+  roomType            RoomType
+  totalBeds           Int
+  occupiedBeds        Int        @default(0)
+  pricePerBed         Float      @db.Double
+  status              RoomStatus @default(vacant)
+  amenities           Json? // Array of strings
+  // dimensions          Json?      // { length, width, area }
+  hasAttachedBathroom Boolean    @default(false)
+
+  furnishing          Furnishing @default(furnished) // Array of { url, caption }
+  maintenanceSchedule Json? // Array of { date, description, status }
+  notes               String?    @db.Text
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  // Relations
+  hostel      Hostel       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor       Floor        @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  beds        Bed[]
+  allocations Allocation[]
+  bookings    Booking[]
+  alerts      Alert[]
+
+  @@unique([hostelId, roomNumber])
+  @@index([status])
+  @@index([floorId])
+  @@index([hostelId])
+}
+
+model Bed {
+  id                Int          @id @default(autoincrement())
+  // hostelId          Int
+  // floorId           Int
+  roomId            Int
+  bedNumber         String       @db.VarChar(50)
+  bedType           BedType      @default(single)
+  position          Json? // { x, y }
+  status            BedStatus    @default(available)
+  currentTenantId   Int?
+  reservedById      Int?
+  reservationExpiry DateTime?
+  condition         BedCondition @default(good)
+  notes             String?      @db.Text
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  // hostel        Hostel       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  // floor         Floor        @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  room          Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  currentTenant User?        @relation("CurrentTenant", fields: [currentTenantId], references: [id], onDelete: SetNull)
+  reservedBy    User?        @relation("BedReservation", fields: [reservedById], references: [id], onDelete: SetNull)
+  allocations   Allocation[]
+  bookings      Booking[]
+
+  @@unique([roomId, bedNumber])
+  @@index([status])
+  @@index([currentTenantId])
+  @@index([roomId])
+}
+
+model Allocation {
+  id                   Int              @id @default(autoincrement())
+  hostelId             Int
+  floorId              Int
+  roomId               Int
+  bedId                Int
+  tenantId             Int // The tenant/user being allocated
+  allocatedById        Int // The admin/staff who created the allocation
+  allocationDate       DateTime         @default(now())
+  checkInDate          DateTime
+  checkOutDate         DateTime?
+  expectedCheckOutDate DateTime?
+  rentAmount           Float            @db.Double
+  depositAmount        Float            @default(0) @db.Double
+  status               AllocationStatus @default(active)
+  paymentStatus        PaymentStatus    @default(pending)
+  transferHistory      Json? // Array of { fromBedId, toBedId, transferDate, reason, transferredById }
+  notes                String?          @db.Text
+  documents            Json? // Array of { name, url, uploadedAt }
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  // Relations
+  hostel      Hostel    @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  floor       Floor     @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  bed         Bed       @relation(fields: [bedId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation("TenantAllocations", fields: [tenantId], references: [id], onDelete: Cascade)
+  allocatedBy User      @relation("AllocationCreator", fields: [allocatedById], references: [id], onDelete: Cascade)
+  payments    Payment[] @relation("AllocationPayments")
+  alerts      Alert[]
+
+  @@index([bedId, status])
+  @@index([roomId, status])
+  @@index([hostelId, status])
+  @@index([tenantId, status])
+  @@index([allocationDate])
+  @@index([hostelId])
+  @@index([floorId])
+  @@index([roomId])
+  @@index([bedId])
+  @@index([tenantId])
+  @@index([allocatedById])
+}
+
+model Tenant {
+  id               Int       @id @default(autoincrement())
+  userId           Int?      @unique // Optional: Link to User account if registered online (one user = one tenant profile)
+  name             String    @db.VarChar(255)
+  email            String?   @unique @db.VarChar(255)
+  phone            String    @db.VarChar(50)
+  alternatePhone   String?   @db.VarChar(50)
+  gender           Gender?
+  dateOfBirth      DateTime?
+  cnicNumber       String?   @unique @db.VarChar(20)
+  address          Json? // { street, city, state, country, pincode }
+  permanentAddress Json? // { street, city, state, country, pincode }
+  
+  // Emergency Contact
+  emergencyContact Json? // { name, relationship, phone, address }
+  
+  // Professional/Educational Info
+  occupation    String? @db.VarChar(255)
+  companyName   String? @db.VarChar(255)
+  designation   String? @db.VarChar(255)
+  monthlyIncome Float?  @db.Double
+  
+  // Identification Documents
+  documents    Json? // Array of { type, number, url, uploadedAt }
+  profilePhoto String? @db.VarChar(500)
+  
+  // Status and Financial
+  status          TenantStatus @default(active)
+  totalPaid       Float        @default(0) @db.Double
+  totalDue        Float        @default(0) @db.Double
+  securityDeposit Float        @default(0) @db.Double
+  
+  // Notes and Remarks
+  notes  String? @db.Text
+  rating Int?    @default(0)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user         User?         @relation("TenantUser", fields: [userId], references: [id], onDelete: SetNull)
+  allocations  Allocation[]  @relation("TenantAllocations")
+  payments     Payment[]
+  transactions Transaction[]
+  bookings     Booking[]
+  alerts       Alert[]
+  
+  @@index([email])
+  @@index([phone])
+  @@index([cnicNumber])
+  @@index([status])
+  @@index([name])
+  @@index([userId])
+}
+
+model Payment {
+  id           Int  @id @default(autoincrement())
+  tenantId     Int?
+  allocationId Int?
+  bookingId    Int?
+  hostelId     Int?
+  
+  // Payment Details
+  amount        Float?         @db.Double
+  paymentType   PaymentType?
+  paymentMethod PaymentMethod?
+  paymentDate   DateTime?      @default(now())
+  
+  // Period Info (for rent payments)
+  forMonth  String? @db.VarChar(20) // "2025-10" format
+  forPeriod Json? // { startDate, endDate }
+  
+  // Transaction Details
+  transactionId String? @db.VarChar(255)
+  receiptNumber String? @unique @db.VarChar(100)
+  
+  // Status
+  status PaymentStatus? @default(paid)
+  
+  // Additional Info
+  remarks     String? @db.Text
+  collectedBy Int? // User ID of staff who collected
+  
+  // Attachments
+  attachments Json? // Array of { name, url, uploadedAt }
+  
+  // Timestamps
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+  
+  // Relations
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  allocation   Allocation?   @relation("AllocationPayments", fields: [allocationId], references: [id], onDelete: SetNull)
+  booking      Booking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  hostel       Hostel?       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  collector    User?         @relation("PaymentCollector", fields: [collectedBy], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+  alerts       Alert[]
+  
+  @@index([tenantId])
+  @@index([allocationId])
+  @@index([bookingId])
+  @@index([hostelId])
+  @@index([paymentDate])
+  @@index([forMonth])
+  @@index([status])
+  @@index([paymentType])
+}
+
+model Employee {
+  id     Int @id @default(autoincrement())
+  userId Int @unique // Link to User account
+  
+  // Employee Details
+  employeeCode String?      @unique @db.VarChar(50)
+  role         EmployeeRole @default(staff)
+  department   String?      @db.VarChar(100)
+  designation  String?      @db.VarChar(100)
+  
+  // Salary Information
+  salary     Float   @db.Double
+  salaryType String? @default("monthly") @db.VarChar(20) // monthly, hourly, daily
+  
+  // Employment Details
+  joinDate        DateTime
+  terminationDate DateTime?
+  status          EmployeeStatus @default(active)
+  
+  // Work Information
+  workingHours   Json? // { startTime, endTime, workingDays: ["monday", "tuesday", ...] }
+  hostelAssigned Int? // Hostel ID if assigned to specific hostel
+  
+  // Bank Details
+  bankDetails Json? // { bankName, accountNumber, ifscCode, branch }
+  
+  // Address
+  address Json? // { street, city, state, country, pincode }
+  
+  // Documents
+  documents    Json? // Array of { type, number, url, uploadedAt }
+  profilePhoto String? @db.VarChar(500)
+  
+  // Additional Info
+  emergencyContact Json? // { name, relationship, phone, address }
+  qualifications   Json? // Array of { degree, institution, year }
+  notes            String? @db.Text
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation("EmployeeUser", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([employeeCode])
+  @@index([role])
+  @@index([status])
+  @@index([hostelAssigned])
+}
+
+model Owner {
+  id        Int     @id @default(autoincrement())
+  userId    Int?    @unique // Optional: Link to User account
+  ownerCode String? @unique @db.VarChar(50)
+
+  // Basic Information
+  name           String  @db.VarChar(255)
+  alternatePhone String? @db.VarChar(50)
+
+  // Business Information
+  HostelName         String? @db.VarChar(255)
+  taxId              String? @db.VarChar(100) // GST/NTN/VAT
+  registrationNumber String? @db.VarChar(100)
+
+  // Address
+  address Json? // { street, city, state, country, zipCode }
+
+  // Bank Details
+  bankDetails Json? // { bankName, accountNumber, ifscCode, branch }
+
+  // Documents
+  documents    Json? // Array of { type, number, url, uploadedAt }
+  profilePhoto String? @db.VarChar(500)
+
+  // Status
+  status String? @default("active") @db.VarChar(50) // active, inactive
+
+  // Additional Info
+  emergencyContact Json? // { name, relationship, phone, address }
+  notes            String? @db.Text
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user    User?    @relation("OwnerUser", fields: [userId], references: [id], onDelete: SetNull)
+  hostels Hostel[] @relation("HostelOwner") // Hostels owned by this owner
+
+  @@index([userId])
+  @@index([ownerCode])
+  @@index([status])
+}
+
+model Transaction {
+  id        Int  @id @default(autoincrement())
+  paymentId Int? // Link to Payment
+  tenantId  Int?
+  hostelId  Int?
+  
+  // Gateway Info
+  gateway         String? @db.VarChar(50) // e.g. "Stripe", "JazzCash", "PayFast"
+  transactionType String? @db.VarChar(30) // e.g. "rent", "deposit", "refund"
+  
+  // Amounts
+  amount   Float?  @db.Double
+  currency String? @default("PKR") @db.VarChar(10)
+  fee      Float?  @default(0) @db.Double // Platform or gateway fee
+  
+  // IDs from Payment Gateway
+  gatewayRef    String? @db.VarChar(255) // e.g. Stripe session/payment_intent id
+  orderId       String? @db.VarChar(255)
+  merchantTxnId String? @db.VarChar(255)
+  
+  // Status & Response
+  status          TransactionStatus? @default(pending)
+  responseCode    String?            @db.VarChar(100)
+  responseMessage String?            @db.VarChar(500)
+  rawResponse     Json? // Full response from gateway for debugging
+  
+  // Payment Method
+  paymentMethod PaymentMethod? // Same enum as Payment (cash, card, bank_transfer, etc.)
+  
+  // IP & Device Info (optional for audit)
+  ipAddress String? @db.VarChar(100)
+  userAgent String? @db.VarChar(500)
+  
+  // Timestamps
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+
+  // Relations
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  hostel  Hostel?  @relation(fields: [hostelId], references: [id], onDelete: SetNull)
+
+  @@index([paymentId])
+  @@index([tenantId])
+  @@index([hostelId])
+  @@index([gateway])
+  @@index([status])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+model Booking {
+  id          Int     @id @default(autoincrement())
+  bookingCode String? @unique @db.VarChar(50)
+  tenantId    Int?
+  hostelId    Int?
+  roomId      Int?
+  bedId       Int?
+  
+  // Dates
+  checkInDate  DateTime?
+  checkOutDate DateTime?
+  bookingDate  DateTime? @default(now())
+
+  // Booking Info
+  bookingType    BookingType?   @default(online)
+  status         BookingStatus? @default(pending)
+  numberOfGuests Int?           @default(1)
+  remarks        String?        @db.Text
+
+  // Payment Info
+  totalAmount   Float?         @db.Double
+  advancePaid   Float?         @default(0) @db.Double
+  paymentStatus PaymentStatus? @default(pending)
+  paymentMethod PaymentMethod?
+  transactionId String?        @db.VarChar(255)
+  
+  // Customer Info (for walk-in bookings without tenant account)
+  customerName  String? @db.VarChar(255)
+  customerEmail String? @db.VarChar(255)
+  customerPhone String? @db.VarChar(50)
+  customerCnic  String? @db.VarChar(20)
+  
+  // Booking created/managed by
+  createdBy Int?
+  
+  // Relations
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  hostel   Hostel?   @relation(fields: [hostelId], references: [id], onDelete: SetNull)
+  room     Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  bed      Bed?      @relation(fields: [bedId], references: [id], onDelete: SetNull)
+  creator  User?     @relation("BookingCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([hostelId])
+  @@index([roomId])
+  @@index([bedId])
+  @@index([status])
+  @@index([bookingDate])
+  @@index([checkInDate])
+  @@index([bookingCode])
+}
+
+// =================== VENDOR ===================
+
 enum VendorStatus {
   active
   inactive
@@ -205,519 +726,104 @@ enum PaymentTerms {
   net60
 }
 
-enum CampaignChannel {
-  email
-  whatsapp
-}
-
-enum CampaignStatus {
-  queued
-  sent
-  delivered
-  read
-  failed
-  replied
-}
-
-// =================== MODELS ===================
-
-model User {
-  id        Int      @id @default(autoincrement())
-  name      String?  @db.VarChar(255)
-  email     String?  @unique @db.VarChar(255)
-  phone     String?  @db.VarChar(50)
-  password  String?  @db.VarChar(255)
-  status    String   @default("active") @db.VarChar(50)
-  role      Role     @default(user)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  managedHostels    Hostel[]           @relation("HostelManager")
-  ownedHostels      Hostel[]           @relation("HostelOwner")
-  tenantProfile     Tenant?            @relation("TenantUser")
-  allocatedBy       Allocation[]       @relation("AllocationCreator")
-  currentBeds       Bed[]              @relation("CurrentTenant")
-  reservedBeds      Bed[]              @relation("BedReservation")
-  paymentsCollected Payment[]          @relation("PaymentCollector")
-  employeeProfile   Employee?          @relation("EmployeeUser")
-  createdBookings   Booking[]          @relation("BookingCreator")
-  assignedAlerts    Alert[]            @relation("AlertAssignedTo")
-  createdAlerts     Alert[]            @relation("AlertCreator")
-  resolvedAlerts    Alert[]            @relation("AlertResolver")
-  emailCampaigns    EmailCampaign[]
-  whatsappCampaigns WhatsAppCampaign[]
-  ActivityLog       ActivityLog[]
-  ScoreCard         ScoreCard[]
-
-  @@index([email])
-  @@index([role])
-}
-
-// =================== MAIN MODELS ===================
-
-model Hostel {
-  id             Int          @id @default(autoincrement())
-  name           String?      @unique @db.VarChar(255)
-  address        Json?
-  description    String?      @db.Text
-  totalFloors    Int?         @default(0)
-  totalRooms     Int?         @default(0)
-  totalBeds      Int?         @default(0)
-  occupiedBeds   Int?         @default(0)
-  amenities      Json?
-  contactInfo    Json?
-  operatingHours Json?
-  status         HostelStatus @default(active)
-  managedBy      Int?
-  ownerId        Int?
-  images         Json?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  // Relations
-  manager      User?         @relation("HostelManager", fields: [managedBy], references: [id], onDelete: SetNull)
-  owner        User?         @relation("HostelOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  floors       Floor[]
-  rooms        Room[]
-  allocations  Allocation[]
-  payments     Payment[]
-  transactions Transaction[]
-  bookings     Booking[]
-  alerts       Alert[]
-  vendors      Vendor[]
-  expenses     Expense[]
-  fpas         FPA[]
-
-  @@index([name])
-  @@index([status])
-  @@index([managedBy])
-  @@index([ownerId])
-}
-
-model Tenant {
-  id               Int          @id @default(autoincrement())
-  userId           Int?         @unique
-  name             String
-  email            String?      @unique
-  phone            String
-  alternatePhone   String?
-  gender           Gender?
-  dateOfBirth      DateTime?
-  cnicNumber       String?      @unique
-  address          Json?
-  permanentAddress Json?
-  emergencyContact Json?
-  occupation       String?
-  companyName      String?
-  designation      String?
-  monthlyIncome    Float?
-  documents        Json?
-  profilePhoto     String?
-  status           TenantStatus @default(active)
-  totalPaid        Float        @default(0)
-  totalDue         Float        @default(0)
-  securityDeposit  Float        @default(0)
-  notes            String?
-  rating           Int?         @default(0)
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-
-  // Relations
-  user         User?         @relation("TenantUser", fields: [userId], references: [id], onDelete: SetNull)
-  allocations  Allocation[]  @relation("TenantAllocations")
-  payments     Payment[]
-  transactions Transaction[]
-  bookings     Booking[]
-  alerts       Alert[]
-
-  @@index([email])
-  @@index([phone])
-  @@index([status])
-  @@index([name])
-}
-
-model Employee {
-  id               Int            @id @default(autoincrement())
-  userId           Int            @unique
-  employeeCode     String?        @unique
-  role             EmployeeRole   @default(staff)
-  department       String?
-  designation      String?
-  salary           Float
-  salaryType       String?        @default("monthly")
-  joinDate         DateTime
-  terminationDate  DateTime?
-  status           EmployeeStatus @default(active)
-  workingHours     Json?
-  hostelAssigned   Int?
-  bankDetails      Json?
-  address          Json?
-  documents        Json?
-  profilePhoto     String?
-  emergencyContact Json?
-  qualifications   Json?
-  notes            String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-
-  user User @relation("EmployeeUser", fields: [userId], references: [id], onDelete: Cascade)
-}
-
 model Vendor {
-  id             Int           @id @default(autoincrement())
-  hostelId       Int?
-  name           String
-  companyName    String?
-  email          String?       @unique
-  phone          String?
-  alternatePhone String?
-  category       String?
-  services       Json?
-  address        Json?
-  paymentTerms   PaymentTerms? @default(net30)
-  totalPayable   Float?        @default(0)
-  totalPaid      Float?        @default(0)
-  balance        Float?        @default(0)
-  status         VendorStatus? @default(active)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  hostel Hostel? @relation(fields: [hostelId], references: [id], onDelete: SetNull)
-}
-
-// =================== EXPENSE MANAGEMENT ===================
-
-model Expense {
-  id        Int      @id @default(autoincrement())
-  title     String
-  category  String
-  amount    Float
-  type      String
-  date      DateTime @default(now())
-  hostelId  Int?
-  hostel    Hostel?  @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// =================== FP&A SUMMARY ===================
-
-model FPA {
-  id            Int      @id @default(autoincrement())
-  month         String
-  year          Int
-  totalIncome   Float    @default(0)
-  totalExpense  Float    @default(0)
-  profit        Float    @default(0)
-  breakeven     Float    @default(0)
-  cashflowRatio Float    @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
+  id       Int  @id @default(autoincrement())
   hostelId Int?
-  hostel   Hostel? @relation(fields: [hostelId], references: [id], onDelete: Cascade)
 
-  @@unique([month, year, hostelId], name: "unique_fpa_month_year_hostel")
-}
+  // Basic Info
+  name           String  @db.VarChar(255)
+  companyName    String? @db.VarChar(255)
+  email          String? @unique @db.VarChar(255)
+  phone          String? @db.VarChar(50)
+  alternatePhone String? @db.VarChar(50)
+  taxId          String? @db.VarChar(100) // GST/NTN/VAT
+  category       String? @db.VarChar(100) // e.g., utilities, maintenance, supplies
+  services       Json? // ["plumbing", "cleaning", ...]
+  contactPerson  Json? // { name, phone, email, designation }
+  address        Json? // { street, city, state, country, zip }
 
-// =================== CAMPAIGNS ===================
+  // Financials
+  paymentTerms PaymentTerms? @default(net30)
+  creditLimit  Float?        @default(0) @db.Double
+  totalPayable Float?        @default(0) @db.Double // Outstanding to vendor
+  totalPaid    Float?        @default(0) @db.Double // Paid to vendor
+  balance      Float?        @default(0) @db.Double // Derived: totalPayable - totalPaid
 
-model EmailCampaign {
-  id           Int      @id @default(autoincrement())
-  title        String
-  subject      String
-  message      String
-  campaignType String?
-  sendDate     DateTime @default(now())
-  targetType   String
-  recipients   Json?
-  status       String?  @default("scheduled")
-  createdBy    Int?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  // Meta
+  documents Json? // [{ name, url }]
+  notes     String?       @db.Text
+  status    VendorStatus? @default(active)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
-  creator User?         @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  logs    CampaignLog[]
-}
+  // Relations
+  hostel Hostel? @relation(fields: [hostelId], references: [id], onDelete: SetNull)
 
-model WhatsAppCampaign {
-  id           Int      @id @default(autoincrement())
-  title        String
-  message      String
-  campaignType String?
-  sendDate     DateTime @default(now())
-  targetType   String
-  recipients   Json?
-  status       String?  @default("scheduled")
-  createdBy    Int?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  creator User?         @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  logs    CampaignLog[]
-}
-
-model CampaignLog {
-  id                 Int             @id @default(autoincrement())
-  channel            CampaignChannel
-  status             CampaignStatus  @default(queued)
-  emailCampaignId    Int?
-  whatsappCampaignId Int?
-  recipientType      String
-  recipientId        Int?
-  recipientEmail     String?
-  recipientPhone     String?
-  providerMessageId  String?         @unique
-  deliveredAt        DateTime?
-  readAt             DateTime?
-  repliedAt          DateTime?
-  replyText          String?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-
-  emailCampaign    EmailCampaign?    @relation(fields: [emailCampaignId], references: [id], onDelete: Cascade)
-  whatsappCampaign WhatsAppCampaign? @relation(fields: [whatsappCampaignId], references: [id], onDelete: Cascade)
-}
-
-// =================== SETTINGS ===================
-
-model Setting {
-  id        Int      @id @default(autoincrement())
-  key       String   @unique
-  value     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// =================== CORE STRUCTURES ===================
-
-model Floor {
-  id           Int          @id @default(autoincrement())
-  hostelId     Int
-  floorNumber  Int
-  floorName    String?      @db.VarChar(255)
-  description  String?      @db.Text
-  totalRooms   Int          @default(0)
-  totalBeds    Int          @default(0)
-  occupiedBeds Int          @default(0)
-  amenities    Json?
-  floorPlan    Json?
-  status       FloorStatus  @default(active)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  rooms  Room[]
-  beds   Bed[]
-
-  @@unique([hostelId, floorNumber], name: "hostelId_floorNumber")
+  @@index([name])
+  @@index([category])
   @@index([status])
   @@index([hostelId])
-}
-
-model Room {
-  id                   Int        @id @default(autoincrement())
-  hostelId             Int
-  floorId              Int
-  roomNumber           String     @db.VarChar(50)
-  roomType             RoomType   @default(single)
-  totalBeds            Int
-  occupiedBeds         Int        @default(0)
-  pricePerBed          Float
-  status               RoomStatus @default(vacant)
-  amenities            Json?
-  dimensions           Json?
-  hasAttachedBathroom  Boolean    @default(false)
-  hasBalcony           Boolean    @default(false)
-  furnishing           Furnishing @default(furnished)
-  images               Json?
-  maintenanceSchedule  Json?
-  notes                String?    @db.Text
-  createdAt            DateTime   @default(now())
-  updatedAt            DateTime   @updatedAt
-
-  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  floor  Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  beds   Bed[]
-  Booking Booking[]
-  allocations Allocation[]
-
-  @@unique([hostelId, roomNumber], name: "hostelId_roomNumber")
-  @@index([status])
-  @@index([hostelId])
-  @@index([floorId])
-}
-
-model Bed {
-  id                Int       @id @default(autoincrement())
-  hostelId          Int
-  floorId           Int
-  roomId            Int
-  bedNumber         String    @db.VarChar(50)
-  bedType           BedType   @default(single)
-  position          Json?
-  status            BedStatus @default(available)
-  currentUserId     Int?
-  reservedById      Int?
-  reservationExpiry DateTime?
-  condition         BedCondition @default(good)
-  notes             String?   @db.Text
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  hostel       Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  floor        Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  room         Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  currentUser  User?  @relation("CurrentTenant", fields: [currentUserId], references: [id], onDelete: SetNull)
-  reservedUser User?  @relation("BedReservation", fields: [reservedById], references: [id], onDelete: SetNull)
-  allocations  Allocation[]
-
-  @@unique([roomId, bedNumber], name: "roomId_bedNumber")
-  @@index([status])
-  @@index([hostelId])
-  @@index([floorId])
-  @@index([roomId])
-}
-
-model Allocation {
-  id                  Int               @id @default(autoincrement())
-  hostelId            Int
-  floorId             Int
-  roomId              Int
-  bedId               Int
-  tenantId            Int
-  allocatedById       Int?
-  allocationDate      DateTime          @default(now())
-  checkInDate         DateTime
-  checkOutDate        DateTime?
-  expectedCheckOutDate DateTime?
-  rentAmount          Float
-  depositAmount       Float             @default(0)
-  status              AllocationStatus  @default(active)
-  paymentStatus       PaymentStatus     @default(pending)
-  transferHistory     Json?
-  notes               String?           @db.Text
-  documents           Json?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-
-  hostel      Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  floor       Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  room        Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  bed         Bed    @relation(fields: [bedId], references: [id], onDelete: Cascade)
-  tenant      Tenant @relation("TenantAllocations", fields: [tenantId], references: [id], onDelete: Cascade)
-  allocatedBy User?  @relation("AllocationCreator", fields: [allocatedById], references: [id], onDelete: SetNull)
-
-  @@index([tenantId, status])
-  @@index([bedId, status])
-  @@index([roomId, status])
-  @@index([hostelId, status])
-  @@index([allocationDate])
-  @@index([hostelId])
-  @@index([floorId])
-  @@index([roomId])
-  @@index([bedId])
-  @@index([tenantId])
-  @@index([allocatedById])
-}
-
-model Payment {
-  id          Int      @id @default(autoincrement())
-  tenantId    Int?
-  hostelId    Int?
-  collectedBy Int?
-  amount      Float
-  status      String   @default("paid")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  tenant      Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  hostel      Hostel?       @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  collector   User?         @relation("PaymentCollector", fields: [collectedBy], references: [id], onDelete: SetNull)
-  Transaction Transaction[]
-}
-
-model Transaction {
-  id        Int      @id @default(autoincrement())
-  paymentId Int?
-  tenantId  Int?
-  hostelId  Int?
-  amount    Float
-  status    String   @default("pending")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  hostel  Hostel?  @relation(fields: [hostelId], references: [id], onDelete: SetNull)
-}
-
-model Booking {
-  id        Int       @id @default(autoincrement())
-  tenantId  Int?
-  hostelId  Int?
-  roomId    Int?
-  createdBy Int?
-  checkIn   DateTime?
-  checkOut  DateTime?
-  status    String    @default("pending")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  tenant  Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  hostel  Hostel? @relation(fields: [hostelId], references: [id], onDelete: SetNull)
-  room    Room?   @relation(fields: [roomId], references: [id], onDelete: SetNull)
-  creator User?   @relation("BookingCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 }
 
 model Alert {
-  id           Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
+  
+  // Alert Type and Status
+  type     AlertType
+  status   AlertStatus   @default(pending)
+  priority AlertPriority @default(medium)
+  
+  // Title and Description
+  title       String  @db.VarChar(500)
+  description String? @db.Text
+  
+  // Maintenance specific field
+  maintenanceType MaintenanceType? // Only for maintenance alerts (cleaning, repairs, purchase_demand)
+  
+  // Relations
   hostelId     Int?
+  roomId       Int?
   tenantId     Int?
-  assignedToId Int?
-  createdById  Int?
-  resolvedById Int?
-  title        String
-  description  String?
-  status       String   @default("pending")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  hostel     Hostel? @relation(fields: [hostelId], references: [id], onDelete: Cascade)
-  tenant     Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  assignedTo User?   @relation("AlertAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
-  creator    User?   @relation("AlertCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  resolver   User?   @relation("AlertResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
-}
-
-model ActivityLog {
-  id          Int      @id @default(autoincrement())
-  userId      Int?
-  action      String // create | update | delete | profile | settings | score
-  module      String // manager | settings | profile | scorecard | ...
-  description String?
-  createdAt   DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([module])
-  @@index([userId, createdAt])
-}
-
-model ScoreCard {
-  id         Int      @id @default(autoincrement())
-  entityType String // "tenant" | "employee"
-  entityId   Int
-  score      Float    @default(0)
-  criteria   String? // e.g. "rent_punctuality" | "attendance"
-  remarks    String?
-  recordedBy Int?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  recorder User? @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
-
-  @@index([entityType, entityId])
+  allocationId Int?
+  paymentId    Int?
+  
+  // Financial Information (for bill, rent, payable, receivable)
+  amount  Float?    @db.Double
+  dueDate DateTime?
+  
+  // Assignment and Resolution
+  assignedTo Int? // Employee/User ID
+  createdBy  Int? // User who created the alert
+  resolvedBy Int? // User who resolved it
+  resolvedAt DateTime?
+  
+  // Additional Data
+  metadata    Json? // Extra info: { items: [], documents: [], notes: "" }
+  attachments Json? // Array of { name, url, uploadedAt }
+  remarks     String? @db.Text
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  hostel       Hostel?     @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  room         Room?       @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  tenant       Tenant?     @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  allocation   Allocation? @relation(fields: [allocationId], references: [id], onDelete: SetNull)
+  payment      Payment?    @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  assignedUser User?       @relation("AlertAssignedTo", fields: [assignedTo], references: [id], onDelete: SetNull)
+  creator      User?       @relation("AlertCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  resolver     User?       @relation("AlertResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  
+  @@index([type])
+  @@index([status])
+  @@index([priority])
+  @@index([hostelId])
+  @@index([roomId])
+  @@index([tenantId])
+  @@index([assignedTo])
+  @@index([createdBy])
+  @@index([dueDate])
   @@index([createdAt])
 }

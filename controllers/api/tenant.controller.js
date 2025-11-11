@@ -2,45 +2,6 @@ const { successResponse, errorResponse } = require('../../Helper/helper');
 const { prisma } = require('../../config/db');
 const path = require('path');
 
-const buildHostelScopeFilter = (req) => {
-  if (req.userRole === 'owner') {
-    return { ownerId: req.userId };
-  }
-  if (req.userRole === 'manager') {
-    return { managedBy: req.userId };
-  }
-  return {};
-};
-
-const buildTenantAccessFilter = (req) => {
-  const hostelFilter = buildHostelScopeFilter(req);
-  if (!Object.keys(hostelFilter).length) return {};
-  return {
-    allocations: {
-      some: {
-        hostel: hostelFilter,
-      },
-    },
-  };
-};
-
-const ensureTenantAccess = async (req, tenantId) => {
-  if (req.userRole === 'admin' || req.userRole === 'staff') {
-    return prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { id: true },
-    });
-  }
-
-  return prisma.tenant.findFirst({
-    where: {
-      id: tenantId,
-      ...buildTenantAccessFilter(req),
-    },
-    select: { id: true },
-  });
-};
-
 // ======================================================
 // CREATE TENANT
 // ======================================================
@@ -102,29 +63,46 @@ const createTenant = async (req, res) => {
     }
 
     // ✅ Create Tenant
-    const tenant = await prisma.tenant.create({
-      data: {
-        userId: userIdExist,
-        firstName,
-        lastName: lastName || null,
-        name: `${firstName} ${lastName || ""}`.trim(),
-        email: email || null,
-        phone,
-        alternatePhone: alternatePhone || null,
-        gender: gender || null,
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-        cnicNumber: cnicNumber || null,
-        address: address || null,
-        permanentAddress: permanentAddress || null,
-        emergencyContact: emergencyContact || null,
-        occupation: occupation || null,
-        companyName: companyName || null,
-        designation: designation || null,
-        monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
-        documents,
-        profilePhoto,
-        notes: notes || null
+    // Helper function to parse JSON if string, otherwise return as is
+    const parseJsonField = (field) => {
+      if (!field) return null;
+      if (typeof field === 'string') {
+        try {
+          return JSON.parse(field);
+        } catch {
+          return field; // If not valid JSON, return as string
+        }
       }
+      return field;
+    };
+
+    const tenantData = {
+      name: `${firstName} ${lastName || ""}`.trim(),
+      email: email || null,
+      phone,
+      alternatePhone: alternatePhone || null,
+      gender: gender || null,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      cnicNumber: cnicNumber || null,
+      address: parseJsonField(address),
+      permanentAddress: parseJsonField(permanentAddress),
+      emergencyContact: parseJsonField(emergencyContact),
+      occupation: occupation || null,
+      companyName: companyName || null,
+      designation: designation || null,
+      monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
+      documents,
+      profilePhoto,
+      notes: notes || null
+    };
+
+    // If userId is provided, connect it using the relation
+    if (userIdExist) {
+      tenantData.user = { connect: { id: userIdExist } };
+    }
+
+    const tenant = await prisma.tenant.create({
+      data: tenantData
     });
 
     return successResponse(res, tenant, "Tenant created successfully", 201);
@@ -140,23 +118,10 @@ const createTenant = async (req, res) => {
 const updateTenant = async (req, res) => {
   try {
     const { id } = req.params;
-    const tenantId = parseInt(id, 10);
-
-    if (Number.isNaN(tenantId)) {
-      return errorResponse(res, "Invalid tenant id", 400);
-    }
-
     const updates = req.body;
 
-    const existingTenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    const existingTenant = await prisma.tenant.findUnique({ where: { id: parseInt(id) } });
     if (!existingTenant) return errorResponse(res, "Tenant not found", 404);
-
-    if (req.userRole !== 'admin' && req.userRole !== 'staff') {
-      const canAccess = await ensureTenantAccess(req, tenantId);
-      if (!canAccess) {
-        return errorResponse(res, "Tenant not found", 404);
-      }
-    }
 
     // ✅ Handle uploaded files
     const profilePhoto = req.files?.profilePhoto?.[0]
@@ -180,18 +145,16 @@ const updateTenant = async (req, res) => {
 
     // ✅ Update data
     const updateData = {
-      firstName: updates.firstName || existingTenant.firstName,
-      lastName: updates.lastName || existingTenant.lastName,
-      name: `${updates.firstName || existingTenant.firstName} ${updates.lastName || existingTenant.lastName || ""}`.trim(),
+      name: updates.name || existingTenant.name,
       email: updates.email || existingTenant.email,
       phone: updates.phone || existingTenant.phone,
       alternatePhone: updates.alternatePhone || existingTenant.alternatePhone,
       gender: updates.gender || existingTenant.gender,
       dateOfBirth: updates.dateOfBirth ? new Date(updates.dateOfBirth) : existingTenant.dateOfBirth,
       cnicNumber: updates.cnicNumber || existingTenant.cnicNumber,
-      address: updates.address || existingTenant.address,
-      permanentAddress: updates.permanentAddress || existingTenant.permanentAddress,
-      emergencyContact: updates.emergencyContact || existingTenant.emergencyContact,
+      address: updates.address ? (typeof updates.address === 'string' ? JSON.parse(updates.address) : updates.address) : existingTenant.address,
+      permanentAddress: updates.permanentAddress ? (typeof updates.permanentAddress === 'string' ? JSON.parse(updates.permanentAddress) : updates.permanentAddress) : existingTenant.permanentAddress,
+      emergencyContact: updates.emergencyContact ? (typeof updates.emergencyContact === 'string' ? JSON.parse(updates.emergencyContact) : updates.emergencyContact) : existingTenant.emergencyContact,
       occupation: updates.occupation || existingTenant.occupation,
       companyName: updates.companyName || existingTenant.companyName,
       designation: updates.designation || existingTenant.designation,
@@ -204,7 +167,7 @@ const updateTenant = async (req, res) => {
     };
 
     const tenant = await prisma.tenant.update({
-      where: { id: tenantId },
+      where: { id: parseInt(id) },
       data: updateData
     });
 
@@ -222,25 +185,19 @@ const getAllTenants = async (req, res) => {
   try {
     const { status, search, page = 1, limit = 20 } = req.query;
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-    const skip = (pageNum - 1) * limitNum;
-
-    const where = {
-      ...buildTenantAccessFilter(req),
-    };
-
-    if (status) where.status = String(status);
-
+    const where = {};
+    if (status) where.status = status;
     if (search) {
       where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { cnicNumber: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search } },
+        { lastName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+        { cnicNumber: { contains: search } }
       ];
     }
+
+    const skip = (page - 1) * limit;
 
     const [tenants, total] = await Promise.all([
       prisma.tenant.findMany({
@@ -251,31 +208,27 @@ const getAllTenants = async (req, res) => {
             include: {
               bed: { select: { bedNumber: true } },
               room: { select: { roomNumber: true } },
-              hostel: { select: { id: true, name: true } },
-            },
+              hostel: { select: { name: true } }
+            }
           },
-          _count: { select: { payments: true, allocations: true } },
+          _count: { select: { payments: true, allocations: true } }
         },
         orderBy: { createdAt: 'desc' },
-        take: limitNum,
-        skip,
+        take: parseInt(limit),
+        skip
       }),
-      prisma.tenant.count({ where }),
+      prisma.tenant.count({ where })
     ]);
 
-    return successResponse(
-      res,
-      {
-        tenants,
-        pagination: {
-          total,
-          page: pageNum,
-          limit: limitNum,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-      "Tenants retrieved successfully"
-    );
+    return successResponse(res, {
+      tenants,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    }, "Tenants retrieved successfully");
   } catch (err) {
     console.error("Get All Tenants Error:", err);
     return errorResponse(res, err.message);
@@ -288,27 +241,15 @@ const getAllTenants = async (req, res) => {
 const deleteTenant = async (req, res) => {
   try {
     const { id } = req.params;
-    const tenantId = parseInt(id, 10);
-
-    if (Number.isNaN(tenantId)) {
-      return errorResponse(res, "Invalid tenant id", 400);
-    }
-
-    if (req.userRole !== 'admin' && req.userRole !== 'staff') {
-      const canAccess = await ensureTenantAccess(req, tenantId);
-      if (!canAccess) {
-        return errorResponse(res, "Tenant not found", 404);
-      }
-    }
 
     const activeAllocation = await prisma.allocation.findFirst({
-      where: { tenantId, status: 'active' }
+      where: { tenantId: parseInt(id), status: 'active' }
     });
 
     if (activeAllocation)
       return errorResponse(res, "Cannot delete tenant with active allocations.", 400);
 
-    await prisma.tenant.delete({ where: { id: tenantId } });
+    await prisma.tenant.delete({ where: { id: parseInt(id) } });
     return successResponse(res, null, "Tenant deleted successfully");
   } catch (err) {
     console.error("Delete Tenant Error:", err);
@@ -317,68 +258,63 @@ const deleteTenant = async (req, res) => {
 };
 
 // ======================================================
-// GET TENANT BY ID (Detailed Profile)
+// GET TENANT BY ID
 // ======================================================
 const getTenantById = async (req, res) => {
   try {
     const { id } = req.params;
-    const tenantId = parseInt(id, 10);
 
-    if (Number.isNaN(tenantId)) {
-      return errorResponse(res, "Invalid tenant id", 400);
-    }
-
-    const tenant = await prisma.tenant.findFirst({
-      where: {
-        id: tenantId,
-        ...buildTenantAccessFilter(req),
-      },
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: parseInt(id) },
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            role: true
-          }
-        },
         allocations: {
-          orderBy: { createdAt: 'desc' },
           include: {
-            hostel: { select: { id: true, name: true, address: true } },
-            creator: { select: { id: true, name: true } }
+            bed: { select: { bedNumber: true } },
+            room: { select: { roomNumber: true } },
+            hostel: { select: { name: true } }
           }
         },
         payments: {
           orderBy: { createdAt: 'desc' },
-          take: 5,
-          include: {
-            hostel: { select: { id: true, name: true } },
-            collector: { select: { id: true, name: true } }
-          }
+          take: 10
         },
-        alerts: {
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: {
-            id: true,
-            title: true,
-            status: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        }
+        _count: { select: { payments: true, allocations: true } }
       }
     });
 
-    if (!tenant) {
-      return errorResponse(res, "Tenant not found", 404);
-    }
+    if (!tenant) return errorResponse(res, "Tenant not found", 404);
 
     return successResponse(res, tenant, "Tenant retrieved successfully");
   } catch (err) {
     console.error("Get Tenant By ID Error:", err);
+    return errorResponse(res, err.message);
+  }
+};
+
+// ======================================================
+// GET ACTIVE TENANTS
+// ======================================================
+const getActiveTenants = async (req, res) => {
+  try {
+    const tenants = await prisma.tenant.findMany({
+      where: { status: 'active' },
+      include: {
+        allocations: {
+          where: { status: 'active' },
+          include: {
+            bed: { select: { bedNumber: true } },
+            room: { select: { roomNumber: true } },
+            hostel: { select: { name: true } }
+          }
+        },
+        _count: { select: { payments: true, allocations: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return successResponse(res, tenants, "Active tenants retrieved successfully");
+  } catch (err) {
+    console.error("Get Active Tenants Error:", err);
     return errorResponse(res, err.message);
   }
 };
@@ -389,75 +325,35 @@ const getTenantById = async (req, res) => {
 const getTenantPaymentHistory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, page = 1, limit = 20 } = req.query;
+    const { page = 1, limit = 20 } = req.query;
 
-    const tenantId = parseInt(id, 10);
-    if (Number.isNaN(tenantId)) {
-      return errorResponse(res, "Invalid tenant id", 400);
-    }
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: parseInt(id) }
+    });
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-    const skip = (pageNum - 1) * limitNum;
+    if (!tenant) return errorResponse(res, "Tenant not found", 404);
 
-    const tenantAccess = await ensureTenantAccess(req, tenantId);
-    if (!tenantAccess) {
-      return errorResponse(res, "Tenant not found", 404);
-    }
-
-    const hostelFilter = buildHostelScopeFilter(req);
-
-    const where = {
-      tenantId,
-    };
-    if (status) {
-      where.status = String(status);
-    }
-    if (Object.keys(hostelFilter).length) {
-      where.hostel = hostelFilter;
-    }
+    const skip = (page - 1) * limit;
 
     const [payments, total] = await Promise.all([
       prisma.payment.findMany({
-        where,
+        where: { tenantId: parseInt(id) },
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limitNum,
-        include: {
-          hostel: { select: { id: true, name: true } },
-          collector: { select: { id: true, name: true } }
-        }
+        take: parseInt(limit),
+        skip
       }),
-      prisma.payment.count({ where })
+      prisma.payment.count({ where: { tenantId: parseInt(id) } })
     ]);
 
-    const paidAmount = await prisma.payment.aggregate({
-      where: { ...where, status: 'paid' },
-      _sum: { amount: true }
-    });
-
-    const outstandingAmount = await prisma.payment.aggregate({
-      where: { ...where, status: { in: ['pending', 'partial', 'overdue'] } },
-      _sum: { amount: true }
-    });
-
-    return successResponse(
-      res,
-      {
-        payments,
-        pagination: {
-          total,
-          page: pageNum,
-          limit: limitNum,
-          pages: Math.ceil(total / limitNum)
-        },
-        totals: {
-          paid: paidAmount._sum.amount || 0,
-          outstanding: outstandingAmount._sum.amount || 0
-        }
-      },
-      "Tenant payment history retrieved successfully"
-    );
+    return successResponse(res, {
+      payments,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    }, "Payment history retrieved successfully");
   } catch (err) {
     console.error("Get Tenant Payment History Error:", err);
     return errorResponse(res, err.message);
@@ -470,120 +366,38 @@ const getTenantPaymentHistory = async (req, res) => {
 const getTenantFinancialSummary = async (req, res) => {
   try {
     const { id } = req.params;
-    const tenantId = parseInt(id, 10);
 
-    if (Number.isNaN(tenantId)) {
-      return errorResponse(res, "Invalid tenant id", 400);
-    }
-
-    const tenant = await prisma.tenant.findFirst({
-      where: {
-        id: tenantId,
-        ...buildTenantAccessFilter(req),
-      },
-      select: {
-        id: true,
-        name: true,
-        status: true,
-        totalPaid: true,
-        totalDue: true,
-        securityDeposit: true,
-        createdAt: true,
-        updatedAt: true
-      }
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: parseInt(id) }
     });
 
-    if (!tenant) {
-      return errorResponse(res, "Tenant not found", 404);
-    }
+    if (!tenant) return errorResponse(res, "Tenant not found", 404);
 
-    const hostelFilter = buildHostelScopeFilter(req);
-    const paymentWhere = Object.keys(hostelFilter).length
-      ? { tenantId, hostel: hostelFilter }
-      : { tenantId };
+    const payments = await prisma.payment.findMany({
+      where: { tenantId: parseInt(id) }
+    });
 
-    const [paidAggregate, pendingAggregate, recentPayment] = await Promise.all([
-      prisma.payment.aggregate({
-        where: { ...paymentWhere, status: 'paid' },
-        _sum: { amount: true },
-        _count: { _all: true }
-      }),
-      prisma.payment.aggregate({
-        where: { ...paymentWhere, status: { in: ['pending', 'partial', 'overdue'] } },
-        _sum: { amount: true },
-        _count: { _all: true }
-      }),
-      prisma.payment.findFirst({
-        where: paymentWhere,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          amount: true,
-          status: true,
-          createdAt: true,
-          hostel: { select: { id: true, name: true } }
-        }
-      })
-    ]);
+    const totalPaid = payments
+      .filter(p => p.status === 'completed')
+      .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+    const totalPending = payments
+      .filter(p => p.status === 'pending')
+      .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
 
     const summary = {
-      tenant,
-      payments: {
-        totalPaidAmount: paidAggregate._sum.amount || 0,
-        totalPaidCount: paidAggregate._count._all,
-        outstandingAmount: pendingAggregate._sum.amount || 0,
-        outstandingCount: pendingAggregate._count._all,
-        lastPayment: recentPayment || null
-      }
+      tenantId: parseInt(id),
+      totalPayments: payments.length,
+      totalPaid,
+      totalPending,
+      completedPayments: payments.filter(p => p.status === 'completed').length,
+      pendingPayments: payments.filter(p => p.status === 'pending').length,
+      failedPayments: payments.filter(p => p.status === 'failed').length
     };
 
-    return successResponse(res, summary, "Tenant financial summary retrieved successfully");
+    return successResponse(res, summary, "Financial summary retrieved successfully");
   } catch (err) {
     console.error("Get Tenant Financial Summary Error:", err);
-    return errorResponse(res, err.message);
-  }
-};
-
-// ======================================================
-// GET ACTIVE TENANTS
-// ======================================================
-const getActiveTenants = async (req, res) => {
-  try {
-    const { search, limit = 20 } = req.query;
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-
-    const where = {
-      status: 'active',
-      ...buildTenantAccessFilter(req),
-    };
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } }
-      ];
-    }
-
-    const tenants = await prisma.tenant.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limitNum,
-      include: {
-        _count: { select: { allocations: true, payments: true } },
-        allocations: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          include: {
-            hostel: { select: { id: true, name: true } }
-          }
-        }
-      }
-    });
-
-    return successResponse(res, tenants, "Active tenants retrieved successfully");
-  } catch (err) {
-    console.error("Get Active Tenants Error:", err);
     return errorResponse(res, err.message);
   }
 };
@@ -594,7 +408,7 @@ module.exports = {
   getAllTenants,
   deleteTenant,
   getTenantById,
+  getActiveTenants,
   getTenantPaymentHistory,
-  getTenantFinancialSummary,
-  getActiveTenants
+  getTenantFinancialSummary
 };

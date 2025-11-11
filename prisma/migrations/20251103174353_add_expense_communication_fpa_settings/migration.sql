@@ -16,10 +16,6 @@ CREATE TABLE `Expense` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-
--- CreateTable
-DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
 -- CreateTable (Only FPA Table)
 CREATE TABLE `FPA` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
@@ -53,11 +49,4 @@ CREATE TABLE `Setting` (
 -- AddForeignKey
 ALTER TABLE `Expense` ADD CONSTRAINT `Expense_hostelId_fkey` FOREIGN KEY (`hostelId`) REFERENCES `Hostel`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
--- AddForeignKey
-ALTER TABLE `Communication` ADD CONSTRAINT `Communication_tenantId_fkey` FOREIGN KEY (`tenantId`) REFERENCES `Tenant`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Communication` ADD CONSTRAINT `Communication_vendorId_fkey` FOREIGN KEY (`vendorId`) REFERENCES `Vendor`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Communication` ADD CONSTRAINT `Communication_employeeId_fkey` FOREIGN KEY (`employeeId`) REFERENCES `Employee`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+-- Note: Communication table foreign keys removed as table doesn't exist in current schema

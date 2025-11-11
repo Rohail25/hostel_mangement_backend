@@ -8,6 +8,7 @@ exports.createEmployee = async (req, res) => {
         const {
             // User data
             name,
+            username,
             email,
             phone,
             password,
@@ -32,10 +33,11 @@ exports.createEmployee = async (req, res) => {
         } = req.body;
         console.log(req.user.role);
         // Validation
-        if (!name || !email || !phone || !password) {
+        const userName = username || name; // Support both name and username for backward compatibility
+        if (!userName || !email || !phone || !password) {
             return res.status(400).json({
                 success: false,
-                message: 'Name, email, phone, and password are required'
+                message: 'Username (or name), email, phone, and password are required'
             });
         }
 
@@ -66,7 +68,7 @@ exports.createEmployee = async (req, res) => {
             // Create user
             const user = await tx.user.create({
                 data: {
-                    name,
+                    username: userName,
                     email,
                     phone,
                     password: hashedPassword,
@@ -108,7 +110,7 @@ exports.createEmployee = async (req, res) => {
             data: {
                 user: {
                     id: result.user.id,
-                    name: result.user.name,
+                    username: result.user.username,
                     email: result.user.email,
                     phone: result.user.phone,
                     role: result.user.role
@@ -154,7 +156,7 @@ exports.getAllEmployees = async (req, res) => {
         const searchConditions = [];
         if (search) {
             searchConditions.push(
-                { user: { name: { contains: search } } },
+                { user: { username: { contains: search } } },
                 { user: { email: { contains: search } } },
                 { user: { phone: { contains: search } } },
                 { employeeCode: { contains: search } },
@@ -175,7 +177,7 @@ exports.getAllEmployees = async (req, res) => {
                     user: {
                         select: {
                             id: true,
-                            name: true,
+                            username: true,
                             email: true,
                             phone: true,
                             role: true,
@@ -223,7 +225,7 @@ exports.getEmployeeById = async (req, res) => {
                 user: {
                     select: {
                         id: true,
-                        name: true,
+                        username: true,
                         email: true,
                         phone: true,
                         role: true,
@@ -268,7 +270,7 @@ exports.getEmployeeByUserId = async (req, res) => {
                 user: {
                     select: {
                         id: true,
-                        name: true,
+                        username: true,
                         email: true,
                         phone: true,
                         role: true,
@@ -308,6 +310,7 @@ exports.updateEmployee = async (req, res) => {
         const {
             // User data
             name,
+            username,
             email,
             phone,
             role: userRole,
@@ -350,7 +353,8 @@ exports.updateEmployee = async (req, res) => {
         const result = await prisma.$transaction(async (tx) => {
             // Update user if user data is provided
             const userUpdateData = {};
-            if (name) userUpdateData.name = name;
+            const userName = username || name; // Support both name and username
+            if (userName) userUpdateData.username = userName;
             if (email) userUpdateData.email = email;
             if (phone) userUpdateData.phone = phone;
             if (userRole) userUpdateData.role = userRole;
@@ -398,7 +402,7 @@ exports.updateEmployee = async (req, res) => {
             data: {
                 user: {
                     id: result.user.id,
-                    name: result.user.name,
+                    username: result.user.username,
                     email: result.user.email,
                     phone: result.user.phone,
                     role: result.user.role
@@ -441,7 +445,7 @@ exports.updateEmployeeSalary = async (req, res) => {
                 user: {
                     select: {
                         id: true,
-                        name: true,
+                        username: true,
                         email: true,
                         phone: true
                     }
@@ -491,7 +495,7 @@ exports.updateEmployeeStatus = async (req, res) => {
                 user: {
                     select: {
                         id: true,
-                        name: true,
+                        username: true,
                         email: true,
                         phone: true
                     }
