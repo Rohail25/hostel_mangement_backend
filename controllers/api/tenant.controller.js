@@ -41,6 +41,21 @@ const ensureTenantAccess = async (req, tenantId) => {
   });
 };
 
+const parseJsonField = (value) => {
+  if (value === undefined || value === null) return null;
+  if (value === '') return null;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+};
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
 // ======================================================
 // CREATE TENANT
 // ======================================================
@@ -72,7 +87,7 @@ const createTenant = async (req, res) => {
       depositAmount
     } = req.body;
 
-    // ✅ Handle uploaded files
+    // Handle uploaded files
     const profilePhoto = req.files?.profilePhoto?.[0]
       ? `/uploads/tenants/${req.files.profilePhoto[0].filename}`
       : null;
@@ -80,7 +95,7 @@ const createTenant = async (req, res) => {
     const documentFiles = req.files?.documents?.map(file => `/uploads/tenants/${file.filename}`) || [];
     const documents = documentFiles.length ? JSON.stringify(documentFiles) : null;
 
-    // ✅ Parse lease + rent values
+    // Parse lease and rent values
     let parsedLeaseStartDate = null;
     if (leaseStartDate) {
       parsedLeaseStartDate = new Date(leaseStartDate);
@@ -118,24 +133,24 @@ const createTenant = async (req, res) => {
       }
     }
 
-    // ✅ Validation
+    // Validation
     if (!firstName || !phone) {
       return errorResponse(res, "First name and phone number are required", 400);
     }
 
-    // ✅ Check if email already exists
+    // Check if email already exists
     if (email) {
       const existingTenant = await prisma.tenant.findUnique({ where: { email } });
       if (existingTenant) return errorResponse(res, "Email already registered", 400);
     }
 
-    // ✅ Check if CNIC already exists
+    // Check if CNIC already exists
     if (cnicNumber) {
       const existingCNIC = await prisma.tenant.findUnique({ where: { cnicNumber } });
       if (existingCNIC) return errorResponse(res, "CNIC number already registered", 400);
     }
 
-    // ✅ Check if linked user exists
+    // Check if linked user exists
     let userIdExist = userId ? parseInt(userId) : null;
     if (userIdExist) {
       const userExists = await prisma.user.findUnique({ where: { id: userIdExist } });
@@ -145,34 +160,45 @@ const createTenant = async (req, res) => {
       if (existingTenantProfile) return errorResponse(res, "This user already has a tenant profile", 400);
     }
 
-    // ✅ Create Tenant
-    const tenant = await prisma.tenant.create({
-      data: {
-        userId: userIdExist,
-        firstName,
-        lastName: lastName || null,
-        name: `${firstName} ${lastName || ""}`.trim(),
-        email: email || null,
-        phone,
-        alternatePhone: alternatePhone || null,
-        gender: gender || null,
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-        cnicNumber: cnicNumber || null,
-        address: address || null,
-        permanentAddress: permanentAddress || null,
-        emergencyContact: emergencyContact || null,
-        occupation: occupation || null,
-        companyName: companyName || null,
-        designation: designation || null,
-        monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
-        documents,
-        profilePhoto,
-        notes: notes || null,
-        leaseStartDate: parsedLeaseStartDate,
-        leaseEndDate: parsedLeaseEndDate,
-        monthlyRent: parsedMonthlyRent,
-        securityDeposit: parsedSecurityDeposit ?? 0
+    // Create Tenant
+    let parsedMonthlyIncome = null;
+    if (monthlyIncome !== undefined && monthlyIncome !== null && monthlyIncome !== "") {
+      const converted = parseFloat(monthlyIncome);
+      if (Number.isNaN(converted)) {
+        return errorResponse(res, "Invalid monthly income amount", 400);
       }
+      parsedMonthlyIncome = converted;
+    }
+
+    const tenantData = {
+      userId: userIdExist,
+      firstName,
+      lastName: lastName || null,
+      name: `${firstName} ${lastName || ""}`.trim(),
+      email: email || null,
+      phone,
+      alternatePhone: alternatePhone || null,
+      gender: gender || null,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      cnicNumber: cnicNumber || null,
+      address: parseJsonField(address),
+      permanentAddress: parseJsonField(permanentAddress),
+      emergencyContact: parseJsonField(emergencyContact),
+      occupation: occupation || null,
+      companyName: companyName || null,
+      designation: designation || null,
+      monthlyIncome: parsedMonthlyIncome,
+      documents,
+      profilePhoto,
+      notes: notes || null,
+      leaseStartDate: parsedLeaseStartDate,
+      leaseEndDate: parsedLeaseEndDate,
+      monthlyRent: parsedMonthlyRent,
+      securityDeposit: parsedSecurityDeposit ?? 0
+    };
+
+    const tenant = await prisma.tenant.create({
+      data: tenantData
     });
 
     return successResponse(res, tenant, "Tenant created successfully", 201);
@@ -206,7 +232,7 @@ const updateTenant = async (req, res) => {
       }
     }
 
-    // ✅ Handle uploaded files
+    // Handle uploaded files
     const profilePhoto = req.files?.profilePhoto?.[0]
       ? `/uploads/tenants/${req.files.profilePhoto[0].filename}`
       : undefined;
@@ -214,20 +240,28 @@ const updateTenant = async (req, res) => {
     const documentFiles = req.files?.documents?.map(file => `/uploads/tenants/${file.filename}`) || [];
     const documents = documentFiles.length ? JSON.stringify(documentFiles) : existingTenant.documents;
 
-    // ✅ Check email duplication
+    // Check email duplication
     if (updates.email && updates.email !== existingTenant.email) {
       const emailExists = await prisma.tenant.findUnique({ where: { email: updates.email } });
       if (emailExists) return errorResponse(res, "Email already registered", 400);
     }
 
-    // ✅ Check CNIC duplication
+    // Check CNIC duplication
     if (updates.cnicNumber && updates.cnicNumber !== existingTenant.cnicNumber) {
       const cnicExists = await prisma.tenant.findUnique({ where: { cnicNumber: updates.cnicNumber } });
       if (cnicExists) return errorResponse(res, "CNIC number already registered", 400);
     }
 
+    const updatedFirstName = hasOwn(updates, "firstName")
+      ? (updates.firstName === null || updates.firstName === '' ? null : updates.firstName)
+      : existingTenant.firstName;
+
+    const updatedLastName = hasOwn(updates, "lastName")
+      ? (updates.lastName === null || updates.lastName === '' ? null : updates.lastName)
+      : existingTenant.lastName;
+
     let updateLeaseStartDate = existingTenant.leaseStartDate;
-    if (Object.prototype.hasOwnProperty.call(updates, "leaseStartDate")) {
+    if (hasOwn(updates, "leaseStartDate")) {
       if (!updates.leaseStartDate) {
         updateLeaseStartDate = null;
       } else {
@@ -240,7 +274,7 @@ const updateTenant = async (req, res) => {
     }
 
     let updateLeaseEndDate = existingTenant.leaseEndDate;
-    if (Object.prototype.hasOwnProperty.call(updates, "leaseEndDate")) {
+    if (hasOwn(updates, "leaseEndDate")) {
       if (!updates.leaseEndDate) {
         updateLeaseEndDate = null;
       } else {
@@ -257,7 +291,7 @@ const updateTenant = async (req, res) => {
     }
 
     let updateMonthlyRent = existingTenant.monthlyRent;
-    if (Object.prototype.hasOwnProperty.call(updates, "monthlyRent")) {
+    if (hasOwn(updates, "monthlyRent")) {
       if (updates.monthlyRent === null || updates.monthlyRent === "") {
         updateMonthlyRent = null;
       } else {
@@ -271,9 +305,9 @@ const updateTenant = async (req, res) => {
 
     const rawUpdateDeposit = (updates.deposit ?? updates.depositAmount ?? updates.securityDeposit);
     let updateSecurityDeposit = existingTenant.securityDeposit;
-    if (Object.prototype.hasOwnProperty.call(updates, "deposit") ||
-        Object.prototype.hasOwnProperty.call(updates, "depositAmount") ||
-        Object.prototype.hasOwnProperty.call(updates, "securityDeposit")) {
+    if (hasOwn(updates, "deposit") ||
+        hasOwn(updates, "depositAmount") ||
+        hasOwn(updates, "securityDeposit")) {
       if (rawUpdateDeposit === null || rawUpdateDeposit === "" || rawUpdateDeposit === undefined) {
         updateSecurityDeposit = 0;
       } else {
@@ -285,25 +319,37 @@ const updateTenant = async (req, res) => {
       }
     }
 
-    // ✅ Update data
+    let updateMonthlyIncome = existingTenant.monthlyIncome;
+    if (hasOwn(updates, "monthlyIncome")) {
+      if (updates.monthlyIncome === null || updates.monthlyIncome === "") {
+        updateMonthlyIncome = null;
+      } else {
+        const parsedIncome = parseFloat(updates.monthlyIncome);
+        if (Number.isNaN(parsedIncome)) {
+          return errorResponse(res, "Invalid monthly income amount", 400);
+        }
+        updateMonthlyIncome = parsedIncome;
+      }
+    }
+
+    // Update data
     const updateData = {
-      firstName: updates.firstName || existingTenant.firstName,
-      lastName: updates.lastName || existingTenant.lastName,
-      name: `${updates.firstName || existingTenant.firstName} ${updates.lastName || existingTenant.lastName || ""}`.trim(),
+      firstName: updatedFirstName,
+      lastName: updatedLastName,
+      name: `${updatedFirstName || ""} ${updatedLastName || ""}`.trim(),
       email: updates.email || existingTenant.email,
       phone: updates.phone || existingTenant.phone,
       alternatePhone: updates.alternatePhone || existingTenant.alternatePhone,
       gender: updates.gender || existingTenant.gender,
       dateOfBirth: updates.dateOfBirth ? new Date(updates.dateOfBirth) : existingTenant.dateOfBirth,
       cnicNumber: updates.cnicNumber || existingTenant.cnicNumber,
-      
-      address: updates.address || existingTenant.address,
-      permanentAddress: updates.permanentAddress || existingTenant.permanentAddress,
-      emergencyContact: updates.emergencyContact || existingTenant.emergencyContact,
+      address: hasOwn(updates, "address") ? parseJsonField(updates.address) : existingTenant.address,
+      permanentAddress: hasOwn(updates, "permanentAddress") ? parseJsonField(updates.permanentAddress) : existingTenant.permanentAddress,
+      emergencyContact: hasOwn(updates, "emergencyContact") ? parseJsonField(updates.emergencyContact) : existingTenant.emergencyContact,
       occupation: updates.occupation || existingTenant.occupation,
       companyName: updates.companyName || existingTenant.companyName,
       designation: updates.designation || existingTenant.designation,
-      monthlyIncome: updates.monthlyIncome ? parseFloat(updates.monthlyIncome) : existingTenant.monthlyIncome,
+      monthlyIncome: updateMonthlyIncome,
       documents,
       profilePhoto: profilePhoto ?? existingTenant.profilePhoto,
       notes: updates.notes || existingTenant.notes,

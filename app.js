@@ -1,6 +1,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cookieParser = require("cookie-parser");
+const cors = require("cors");
 const { dbConnection } = require("./config/db");
 
 const userRoute = require("./routes/api/admin/user.route");
@@ -35,13 +36,21 @@ const settingRoute = require("./routes/api/admin/setting.route");
 const peopleRoute = require("./routes/api/dashboard/people.route");
 const accountsRoute = require("./routes/api/dashboard/accounts.route");
 const vendorsRoute = require("./routes/api/dashboard/vendors.route");
-
-
+const alertRoute = require("./routes/api/admin/alert.route");
+const adminVendorRoute = require("./routes/api/admin/vendor.route");
+const hostelRoute = require("./routes/api/admin/hostel.route");
 
 // Load environment variables
 dotenv.config();
-
+ 
 const app = express();
+
+// CORS configuration - Allow all origins
+app.use(cors({
+    origin: '*', // Allow all origins
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 // ⚠️ IMPORTANT: Stripe webhook requires RAW body for signature verification
 // We need to capture raw body BEFORE express.json() parses it
@@ -102,11 +111,12 @@ app.use("/api/admin", communicationRoute);
 app.use("/api/admin", fpaDashboardRoute);
 app.use("/api/admin", settingsDashboardRoute);
 app.use("/api/admin", vendorsRoute);
-app.use("/api/admin", settingsDashboardRoute);
+app.use("/api/admin", alertRoute);
+app.use("/api/admin", adminVendorRoute);
+app.use("/api/admin", hostelRoute);
 
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
-  

@@ -1,8 +1,10 @@
 /*
   Warnings:
 
-  - You are about to drop the column `aadharNumber` on the `tenant` table. All the data in the column will be lost.
+  - You are about to drop the column `aadharNumber` on the `Tenant` table. All the data in the column will be lost.
   - A unique constraint covering the columns `[cnicNumber]` on the table `Tenant` will be added. If there are existing duplicate values, this will fail.
+  
+  Note: For shadow database validation, ensure the `Tenant` table exists before running this migration. The statements below include `IF EXISTS`/`IF NOT EXISTS` guards where available.
 */
 -- DropIndex
 DROP INDEX IF EXISTS `Tenant_aadharNumber_idx` ON `tenant`;
@@ -11,7 +13,7 @@ DROP INDEX IF EXISTS `Tenant_aadharNumber_idx` ON `tenant`;
 DROP INDEX IF EXISTS `Tenant_aadharNumber_key` ON `tenant`;
 
 -- AlterTable
-ALTER TABLE `tenant` 
+ALTER TABLE `tenant`
     DROP COLUMN IF EXISTS `aadharNumber`;
 
 ALTER TABLE `tenant`

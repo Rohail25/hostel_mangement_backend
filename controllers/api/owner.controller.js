@@ -1,16 +1,36 @@
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const { prisma } = require('../../config/db');
 const { successResponse, errorResponse } = require('../../Helper/helper');
 const { writeLog } = require('../../Helper/audit.helper');
 
 const OWNER_SELECT_FIELDS = {
   id: true,
+  userId: true,
+  ownerCode: true,
   name: true,
-  email: true,
-  phone: true,
+  alternatePhone: true,
+  HostelName: true,
+  taxId: true,
+  registrationNumber: true,
+  address: true,
+  bankDetails: true,
+  documents: true,
+  profilePhoto: true,
   status: true,
+  emergencyContact: true,
+  notes: true,
   createdAt: true,
   updatedAt: true,
+  user: {
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+    },
+  },
 };
 
 const buildOwnerSnapshot = async (ownerId) => {
@@ -29,7 +49,7 @@ const buildOwnerSnapshot = async (ownerId) => {
       manager: {
         select: {
           id: true,
-          name: true,
+          username: true,
           email: true,
           phone: true,
         },
@@ -133,26 +153,120 @@ const buildOwnerSnapshot = async (ownerId) => {
 
 const createOwner = async (req, res) => {
   try {
-    const { name, email, phone, password, status = 'active' } = req.body || {};
+    const {
+      // Owner fields
+      name,
+      alternatePhone,
+      HostelName,
+      taxId,
+      registrationNumber,
+      address,
+      bankDetails,
+      documents,
+      profilePhoto,
+      status = 'active',
+      emergencyContact,
+      notes,
+      ownerCode,
+      // User account fields (optional)
+      email,
+      username,
+      phone,
+      password,
+    } = req.body || {};
 
-    if (!name || !email || !password) {
-      return errorResponse(res, 'Name, email and password are required', 400);
+    // Validate required fields
+    if (!name) {
+      return errorResponse(res, 'Name is required', 400);
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return errorResponse(res, 'Email already in use', 400);
+    let userId = null;
+
+    // If email/password provided, create User account first
+    if (email && password) {
+      // Check if email already exists
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        return errorResponse(res, 'Email already in use', 400);
+      }
+
+      // Check if user already has an owner profile
+      if (existingUser?.ownerProfile) {
+        return errorResponse(res, 'User already has an owner profile', 400);
+      }
+
+      // Hash password and create user
+      const hashedPassword = await bcrypt.hash(String(password), 10);
+      const newUser = await prisma.user.create({
+        data: {
+          username: username || name,
+          email,
+          phone: phone || null,
+          password: hashedPassword,
+          role: 'owner',
+          status: 'active',
+        },
+      });
+      userId = newUser.id;
     }
 
-    const hashedPassword = await bcrypt.hash(String(password), 10);
-    const owner = await prisma.user.create({
+    // Check if ownerCode already exists
+    if (ownerCode) {
+      const existingOwner = await prisma.owner.findUnique({
+        where: { ownerCode },
+      });
+      if (existingOwner) {
+        // If we created a user, delete it
+        if (userId) {
+          await prisma.user.delete({ where: { id: userId } });
+        }
+        return errorResponse(res, 'Owner code already exists', 400);
+      }
+    }
+
+    // Handle uploaded profile photo
+    const profilePhotoPath = req.files?.profilePhoto?.[0]
+      ? `/uploads/owners/${req.files.profilePhoto[0].filename}`
+      : (profilePhoto || null);
+
+    // Handle uploaded documents
+    let documentsArray = [];
+    if (req.files?.documents && req.files.documents.length > 0) {
+      documentsArray = req.files.documents.map(file => ({
+        name: file.originalname,
+        url: `/uploads/owners/documents/${file.filename}`,
+        uploadedAt: new Date().toISOString()
+      }));
+    } else if (documents) {
+      // If documents provided as JSON string or array
+      if (typeof documents === 'string') {
+        try {
+          documentsArray = JSON.parse(documents);
+        } catch {
+          documentsArray = [];
+        }
+      } else if (Array.isArray(documents)) {
+        documentsArray = documents;
+      }
+    }
+
+    // Create Owner record
+    const owner = await prisma.owner.create({
       data: {
+        userId: userId || null,
+        ownerCode: ownerCode || null,
         name,
-        email,
-        phone: phone || null,
-        password: hashedPassword,
-        role: 'owner',
-        status,
+        alternatePhone: alternatePhone || null,
+        HostelName: HostelName || null,
+        taxId: taxId || null,
+        registrationNumber: registrationNumber || null,
+        address: address ? (typeof address === 'string' ? JSON.parse(address) : address) : null,
+        bankDetails: bankDetails ? (typeof bankDetails === 'string' ? JSON.parse(bankDetails) : bankDetails) : null,
+        documents: documentsArray.length > 0 ? documentsArray : null,
+        profilePhoto: profilePhotoPath,
+        status: status || 'active',
+        emergencyContact: emergencyContact ? (typeof emergencyContact === 'string' ? JSON.parse(emergencyContact) : emergencyContact) : null,
+        notes: notes || null,
       },
       select: OWNER_SELECT_FIELDS,
     });
@@ -161,7 +275,7 @@ const createOwner = async (req, res) => {
       userId: req.userId,
       action: 'create',
       module: 'owner',
-      description: `Owner ${email} created`,
+      description: `Owner ${name} created${email ? ` with email ${email}` : ''}`,
     });
 
     return successResponse(res, owner, 'Owner created successfully', 201);
@@ -179,7 +293,6 @@ const listOwners = async (req, res) => {
     const skip = (pageNumber - 1) * limitNumber;
 
     const where = {
-      role: 'owner',
       ...(status ? { status: String(status) } : {}),
     };
 
@@ -187,23 +300,24 @@ const listOwners = async (req, res) => {
       const term = String(search);
       where.OR = [
         { name: { contains: term, mode: 'insensitive' } },
-        { email: { contains: term, mode: 'insensitive' } },
-        { phone: { contains: term, mode: 'insensitive' } },
+        { ownerCode: { contains: term, mode: 'insensitive' } },
+        { HostelName: { contains: term, mode: 'insensitive' } },
+        { taxId: { contains: term, mode: 'insensitive' } },
       ];
     }
 
     const [owners, total] = await Promise.all([
-      prisma.user.findMany({
+      prisma.owner.findMany({
         where,
         select: {
           ...OWNER_SELECT_FIELDS,
-          _count: { select: { ownedHostels: true } },
+          _count: { select: { hostels: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limitNumber,
       }),
-      prisma.user.count({ where }),
+      prisma.owner.count({ where }),
     ]);
 
     return successResponse(
@@ -211,7 +325,7 @@ const listOwners = async (req, res) => {
       {
         items: owners.map((owner) => ({
           ...owner,
-          hostelCount: owner._count?.ownedHostels ?? 0,
+          hostelCount: owner._count?.hostels ?? 0,
         })),
         total,
         pagination: {
@@ -235,12 +349,19 @@ const getOwnerById = async (req, res) => {
       return errorResponse(res, 'Invalid owner id', 400);
     }
 
-    if (req.userRole === 'owner' && req.userId !== ownerId) {
-      return errorResponse(res, 'Unauthorized to view this owner', 403);
+    // Check authorization - if user is owner, they can only view their own profile
+    if (req.userRole === 'owner') {
+      const ownerProfile = await prisma.owner.findFirst({
+        where: { userId: req.userId },
+        select: { id: true },
+      });
+      if (ownerProfile && ownerProfile.id !== ownerId) {
+        return errorResponse(res, 'Unauthorized to view this owner', 403);
+      }
     }
 
-    const owner = await prisma.user.findFirst({
-      where: { id: ownerId, role: 'owner' },
+    const owner = await prisma.owner.findUnique({
+      where: { id: ownerId },
       select: OWNER_SELECT_FIELDS,
     });
 
@@ -264,10 +385,47 @@ const getOwnerById = async (req, res) => {
 };
 
 const getMyOwnerProfile = async (req, res) => {
+  console.log('getMyOwnerProfile called - userRole:', req.userRole, 'userId:', req.userId);
   if (req.userRole !== 'owner') {
     return errorResponse(res, 'Only owners can access their profile', 403);
   }
-  req.params.id = req.userId;
+  
+  // Find owner profile by userId
+  let ownerProfile = await prisma.owner.findFirst({
+    where: { userId: req.userId },
+    select: { id: true },
+  });
+  console.log(ownerProfile);
+  if (!ownerProfile) {
+    try {
+      // Get user data
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { username: true, email: true, phone: true },
+      });
+
+      if (!user) {
+        return errorResponse(res, 'User not found', 404);
+      }
+
+      // Create owner profile automatically
+      const newOwner = await prisma.owner.create({
+        data: {
+          userId: req.userId,
+          name: user.username || 'Owner',
+          status: 'active',
+        },
+        select: { id: true },
+      });
+
+      ownerProfile = newOwner;
+    } catch (error) {
+      console.error('Error creating owner profile:', error);
+      return errorResponse(res, 'Failed to create owner profile. Please contact admin.', 500);
+    }
+  }
+
+  req.params.id = ownerProfile.id;
   return getOwnerById(req, res);
 };
 
@@ -280,19 +438,60 @@ const getOwnerDashboard = async (req, res) => {
       if (req.userRole !== 'owner') {
         return errorResponse(res, 'Only owners can access this dashboard', 403);
       }
-      ownerId = req.userId;
+      // Find owner profile by userId
+      let ownerProfile = await prisma.owner.findFirst({
+        where: { userId: req.userId },
+        select: { id: true },
+      });
+      
+      // If no owner profile exists, create one automatically
+      if (!ownerProfile) {
+        try {
+          const user = await prisma.user.findUnique({
+            where: { id: req.userId },
+            select: { username: true, email: true, phone: true },
+          });
+
+          if (user) {
+            const newOwner = await prisma.owner.create({
+              data: {
+                userId: req.userId,
+                name: user.username || 'Owner',
+                status: 'active',
+              },
+              select: { id: true },
+            });
+            ownerProfile = newOwner;
+          }
+        } catch (error) {
+          console.error('Error creating owner profile:', error);
+          return errorResponse(res, 'Owner profile not found', 404);
+        }
+      }
+      
+      if (!ownerProfile) {
+        return errorResponse(res, 'Owner profile not found', 404);
+      }
+      ownerId = ownerProfile.id;
     } else {
       ownerId = Number(ownerIdParam);
       if (!Number.isFinite(ownerId)) {
         return errorResponse(res, 'Invalid owner id', 400);
       }
-      if (req.userRole === 'owner' && req.userId !== ownerId) {
-        return errorResponse(res, 'Unauthorized to view this dashboard', 403);
+      // Check authorization
+      if (req.userRole === 'owner') {
+        const ownerProfile = await prisma.owner.findFirst({
+          where: { userId: req.userId },
+          select: { id: true },
+        });
+        if (ownerProfile && ownerProfile.id !== ownerId) {
+          return errorResponse(res, 'Unauthorized to view this dashboard', 403);
+        }
       }
     }
 
-    const owner = await prisma.user.findFirst({
-      where: { id: ownerId, role: 'owner' },
+    const owner = await prisma.owner.findUnique({
+      where: { id: ownerId },
       select: OWNER_SELECT_FIELDS,
     });
 
@@ -301,18 +500,22 @@ const getOwnerDashboard = async (req, res) => {
     }
 
     const snapshot = await buildOwnerSnapshot(ownerId);
-    const recentActivity = await prisma.activityLog.findMany({
-      where: { userId: ownerId },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-      select: {
-        id: true,
-        action: true,
-        module: true,
-        description: true,
-        createdAt: true,
-      },
-    });
+    // Get recent activity if owner has linked user account
+    let recentActivity = [];
+    if (owner.userId) {
+      recentActivity = await prisma.activityLog.findMany({
+        where: { userId: owner.userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          action: true,
+          module: true,
+          description: true,
+          createdAt: true,
+        },
+      });
+    }
 
     return successResponse(
       res,
@@ -336,53 +539,164 @@ const updateOwner = async (req, res) => {
       return errorResponse(res, 'Invalid owner id', 400);
     }
 
+    // Check if owner exists
+    const existingOwner = await prisma.owner.findUnique({
+      where: { id: ownerId },
+      select: { userId: true, profilePhoto: true },
+    });
+
+    if (!existingOwner) {
+      return errorResponse(res, 'Owner not found', 404);
+    }
+
     const isAdmin = req.userRole === 'admin';
-    const isSelf = req.userRole === 'owner' && req.userId === ownerId;
+    const isSelf = req.userRole === 'owner' && existingOwner.userId === req.userId;
 
     if (!isAdmin && !isSelf) {
       return errorResponse(res, 'Unauthorized to update this owner', 403);
     }
 
-    const { name, email, phone, status, password } = req.body || {};
-    const data = {};
+    const {
+      name,
+      alternatePhone,
+      HostelName,
+      taxId,
+      registrationNumber,
+      address,
+      bankDetails,
+      documents,
+      profilePhoto,
+      status,
+      emergencyContact,
+      notes,
+      ownerCode,
+      // User account fields (optional)
+      email,
+      username,
+      phone,
+      password,
+    } = req.body || {};
 
-    if (name !== undefined) data.name = name;
-    if (phone !== undefined) data.phone = phone;
+    const ownerData = {};
+    const userData = {};
 
-    if (password) {
-      data.password = await bcrypt.hash(String(password), 10);
+    // Update Owner fields
+    if (name !== undefined) ownerData.name = name;
+    if (alternatePhone !== undefined) ownerData.alternatePhone = alternatePhone;
+    if (HostelName !== undefined) ownerData.HostelName = HostelName;
+    if (taxId !== undefined) ownerData.taxId = taxId;
+    if (registrationNumber !== undefined) ownerData.registrationNumber = registrationNumber;
+    if (address !== undefined) {
+      ownerData.address = typeof address === 'string' ? JSON.parse(address) : address;
     }
-
-    if (email !== undefined) {
-      const existing = await prisma.user.findUnique({ where: { email } });
-      if (existing && existing.id !== ownerId) {
-        return errorResponse(res, 'Email already in use', 400);
+    if (bankDetails !== undefined) {
+      ownerData.bankDetails = typeof bankDetails === 'string' ? JSON.parse(bankDetails) : bankDetails;
+    }
+    // Handle uploaded profile photo
+    if (req.files?.profilePhoto?.[0]) {
+      // Delete old profile photo if it exists
+      if (existingOwner.profilePhoto) {
+        const oldPhotoPath = path.join(__dirname, '../../..', existingOwner.profilePhoto);
+        if (fs.existsSync(oldPhotoPath)) {
+          try {
+            fs.unlinkSync(oldPhotoPath);
+          } catch (err) {
+            console.error('Error deleting old profile photo:', err);
+          }
+        }
       }
-      data.email = email;
+      ownerData.profilePhoto = `/uploads/owners/${req.files.profilePhoto[0].filename}`;
+    } else if (profilePhoto !== undefined) {
+      ownerData.profilePhoto = profilePhoto;
     }
 
-    if (isAdmin && status !== undefined) {
-      data.status = status;
-    }
+    // Handle uploaded documents
+    if (req.files?.documents && req.files.documents.length > 0) {
+      const newDocuments = req.files.documents.map(file => ({
+        name: file.originalname,
+        url: `/uploads/owners/documents/${file.filename}`,
+        uploadedAt: new Date().toISOString()
+      }));
 
-    if (!isAdmin && status !== undefined) {
-      return errorResponse(res, 'Owners cannot change their status', 403);
-    }
-
-    if (Object.keys(data).length === 0) {
-      const owner = await prisma.user.findFirst({
-        where: { id: ownerId, role: 'owner' },
-        select: OWNER_SELECT_FIELDS,
+      // Get existing documents if any
+      const existingOwnerFull = await prisma.owner.findUnique({
+        where: { id: ownerId },
+        select: { documents: true },
       });
-      if (!owner) {
-        return errorResponse(res, 'Owner not found', 404);
+
+      let existingDocuments = [];
+      if (existingOwnerFull?.documents) {
+        if (typeof existingOwnerFull.documents === 'string') {
+          try {
+            existingDocuments = JSON.parse(existingOwnerFull.documents);
+          } catch {
+            existingDocuments = [];
+          }
+        } else if (Array.isArray(existingOwnerFull.documents)) {
+          existingDocuments = existingOwnerFull.documents;
+        }
       }
-      return successResponse(res, owner, 'Owner updated successfully');
+
+      // Merge existing and new documents
+      ownerData.documents = [...existingDocuments, ...newDocuments];
+    } else if (documents !== undefined) {
+      // If documents provided as JSON string or array (replacing existing)
+      if (typeof documents === 'string') {
+        try {
+          ownerData.documents = JSON.parse(documents);
+        } catch {
+          ownerData.documents = documents;
+        }
+      } else if (Array.isArray(documents)) {
+        ownerData.documents = documents;
+      }
+    }
+    if (status !== undefined) ownerData.status = status;
+    if (emergencyContact !== undefined) {
+      ownerData.emergencyContact = typeof emergencyContact === 'string' ? JSON.parse(emergencyContact) : emergencyContact;
+    }
+    if (notes !== undefined) ownerData.notes = notes;
+    if (ownerCode !== undefined) {
+      // Check if ownerCode already exists (excluding current owner)
+      const existingCode = await prisma.owner.findFirst({
+        where: { ownerCode, id: { not: ownerId } },
+      });
+      if (existingCode) {
+        return errorResponse(res, 'Owner code already exists', 400);
+      }
+      ownerData.ownerCode = ownerCode;
     }
 
-    const owner = await prisma.user.update({
-      where: { id: ownerId, role: 'owner' },
-      data,
+    // Update User account if linked
+    if (existingOwner.userId) {
+      if (email !== undefined) {
+        const existing = await prisma.user.findFirst({
+          where: { email, id: { not: existingOwner.userId } },
+        });
+        if (existing) {
+          return errorResponse(res, 'Email already in use', 400);
+        }
+        userData.email = email;
+      }
+      if (username !== undefined) userData.username = username;
+      if (phone !== undefined) userData.phone = phone;
+      if (password) {
+        userData.password = await bcrypt.hash(String(password), 10);
+      }
+
+      // Update user if there are changes
+      if (Object.keys(userData).length > 0) {
+        await prisma.user.update({
+          where: { id: existingOwner.userId },
+          data: userData,
+        });
+      }
+    }
+
+    // Update owner
+    const updatedOwner = await prisma.owner.update({
+      where: { id: ownerId },
+      data: ownerData,
       select: OWNER_SELECT_FIELDS,
     });
 
@@ -390,10 +704,10 @@ const updateOwner = async (req, res) => {
       userId: req.userId,
       action: 'update',
       module: 'owner',
-      description: `Owner #${ownerId} updated`,
+      description: `Owner ${ownerId} updated`,
     });
 
-    return successResponse(res, owner, 'Owner updated successfully');
+    return successResponse(res, updatedOwner, 'Owner updated successfully');
   } catch (error) {
     console.error('Update owner error:', error);
     if (error.code === 'P2025') {
@@ -410,9 +724,9 @@ const deleteOwner = async (req, res) => {
       return errorResponse(res, 'Invalid owner id', 400);
     }
 
-    const owner = await prisma.user.findFirst({
-      where: { id: ownerId, role: 'owner' },
-      select: { id: true, email: true },
+    const owner = await prisma.owner.findUnique({
+      where: { id: ownerId },
+      select: { id: true, userId: true, name: true },
     });
 
     if (!owner) {
@@ -431,9 +745,21 @@ const deleteOwner = async (req, res) => {
       );
     }
 
-    await prisma.user.delete({
+    // Delete owner (this will set userId to null in User if linked)
+    await prisma.owner.delete({
       where: { id: ownerId },
     });
+
+    // Optionally delete user account if it exists and has no other relations
+    if (owner.userId) {
+      // Check if user has other relations before deleting
+      const userHostels = await prisma.hostel.count({
+        where: { ownerId: null }, // Check if user owns hostels through other means
+      });
+      // For now, we'll keep the user account, just unlink it
+      // If you want to delete the user account too, uncomment below:
+      // await prisma.user.delete({ where: { id: owner.userId } });
+    }
 
     await writeLog({
       userId: req.userId,

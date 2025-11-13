@@ -52,7 +52,7 @@ const registerUser = async (req, res) => {
         // Return user without password
         const userResponse = {
             id: user.id,
-            username: user.name,
+            username: user.username,
             email: user.email,
             phone: user.phone,
             role: user.role,
@@ -115,7 +115,7 @@ const loginUser = async (req, res) => {
         // Return user data without password
         const userData = {
             id: user.id,
-            username: user.name,
+            username: user.username,
             email: user.email,
             phone: user.phone,
             role: user.role,
@@ -201,7 +201,7 @@ const getUserById = async (req, res) => {
 const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, email, phone, password, role, status } = req.body;
+        const { username, email, phone, password, role, status } = req.body;
 
         // Validate ID is a valid number
         const userId = parseInt(id);
@@ -221,7 +221,7 @@ const updateUser = async (req, res) => {
         // Prepare update data
         const updateData = {};
 
-        if (name) updateData.name = name;
+        if (username) updateData.username = username;
         if (phone) updateData.phone = phone;
         if (role && ['admin', 'manager', 'staff', 'user'].includes(role)) {
             updateData.role = role;
