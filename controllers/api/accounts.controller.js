@@ -1,5 +1,5 @@
-const { prisma } = require('../../../config/db');
-const { successResponse, errorResponse } = require('../../../Helper/helper');
+const { prisma } = require('../../config/db');
+const { successResponse, errorResponse } = require('../../Helper/helper');
 
 /**
  * =====================================================
@@ -53,11 +53,16 @@ const buildExpenseSearchClause = (searchTerm) => {
   const value = searchTerm.trim();
   if (!value) return null;
 
+  // Check if search term looks like a reference number (e.g., EXP-3001)
+  const referenceMatch = value.match(/^(EXP|LAUNDRY|ALERT)-?(\d+)$/i);
+  
   return {
     OR: [
       { title: { contains: value, mode: 'insensitive' } },
       { category: { contains: value, mode: 'insensitive' } },
       { type: { contains: value, mode: 'insensitive' } },
+      // If it's a reference number, search by ID
+      ...(referenceMatch ? [{ id: parseInt(referenceMatch[2], 10) }] : []),
     ],
   };
 };
@@ -94,6 +99,9 @@ const buildPaymentSearchClause = (searchTerm) => {
   const value = searchTerm.trim();
   if (!value) return null;
 
+  // Check if search term looks like a reference number (e.g., RENT-1001)
+  const referenceMatch = value.match(/^(RENT|DEPOSIT|MAINTENANCE|ELECTRICITY|WATER|OTHER)-?(\d+)$/i);
+  
   return {
     OR: [
       { receiptNumber: { contains: value, mode: 'insensitive' } },
@@ -101,19 +109,36 @@ const buildPaymentSearchClause = (searchTerm) => {
       { tenant: { name: { contains: value, mode: 'insensitive' } } },
       { tenant: { email: { contains: value, mode: 'insensitive' } } },
       { hostel: { name: { contains: value, mode: 'insensitive' } } },
+      // If it's a reference number, search by ID
+      ...(referenceMatch ? [{ id: parseInt(referenceMatch[2], 10) }] : []),
     ],
   };
 };
 
-const buildExpenseFilter = ({ hostelId, search }) => {
-  const filter = {
-    ...(hostelId ? { hostelId } : {}),
-  };
+const buildExpenseFilter = ({ hostelId, search, excludeLaundry = false }) => {
+  const andClauses = [];
+
+  // Exclude laundry expenses if requested (for bills view)
+  if (excludeLaundry) {
+    andClauses.push({
+      NOT: {
+        OR: [
+          { category: { contains: 'laundry', mode: 'insensitive' } },
+          { title: { contains: 'laundry', mode: 'insensitive' } },
+        ],
+      },
+    });
+  }
 
   const searchClause = buildExpenseSearchClause(search);
   if (searchClause) {
-    filter.AND = [searchClause];
+    andClauses.push(searchClause);
   }
+
+  const filter = {
+    ...(hostelId ? { hostelId } : {}),
+    ...(andClauses.length > 0 ? { AND: andClauses } : {}),
+  };
 
   return filter;
 };
@@ -149,7 +174,7 @@ const buildVendorFilter = ({ hostelId, search }) => {
 const buildLaundryFilter = ({ hostelId, search }) => {
   const filter = {
     ...(hostelId ? { hostelId } : {}),
-    category: { contains: 'laundry', mode: 'insensitive' },
+    category: { contains: 'laundry' },
   };
 
   const searchClause = buildExpenseSearchClause(search);
@@ -249,15 +274,18 @@ const buildCapitalPaymentFilter = ({ hostelId, startDate, endDate }) => {
   return where;
 };
 
-const computePayablesSummary = async ({ hostelId, search }) => {
-  const expenseFilter = buildExpenseFilter({ hostelId, search });
+const computePayablesSummary = async ({ hostelId, search, type }) => {
+  // For bills summary, exclude laundry
+  const billsExpenseFilter = buildExpenseFilter({ hostelId, search, excludeLaundry: true });
   const alertFilter = buildAlertFilter({ hostelId, search });
   const vendorFilter = buildVendorFilter({ hostelId, search });
   const laundryFilter = buildLaundryFilter({ hostelId, search });
+  // For "all" summary, include everything
+  const allExpenseFilter = buildExpenseFilter({ hostelId, search, excludeLaundry: false });
 
-  const [expenseAgg, alertAgg, vendorAgg, laundryAgg] = await Promise.all([
+  const [billsExpenseAgg, alertAgg, vendorAgg, laundryAgg, allExpenseAgg] = await Promise.all([
     prisma.expense.aggregate({
-      where: expenseFilter,
+      where: billsExpenseFilter,
       _sum: { amount: true },
       _count: { _all: true },
     }),
@@ -276,16 +304,25 @@ const computePayablesSummary = async ({ hostelId, search }) => {
       _sum: { amount: true },
       _count: { _all: true },
     }),
+    prisma.expense.aggregate({
+      where: allExpenseFilter,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
   ]);
 
-  const billsAmount = (expenseAgg._sum.amount || 0) + (alertAgg._sum.amount || 0);
-  const billsCount = (expenseAgg._count._all || 0) + (alertAgg._count._all || 0);
+  const billsAmount = (billsExpenseAgg._sum.amount || 0) + (alertAgg._sum.amount || 0);
+  const billsCount = (billsExpenseAgg._count._all || 0) + (alertAgg._count._all || 0);
 
   const vendorAmount = vendorAgg._sum.totalPayable || 0;
   const vendorCount = vendorAgg._count._all || 0;
 
   const laundryAmount = laundryAgg._sum.amount || 0;
   const laundryCount = laundryAgg._count._all || 0;
+
+  // For "all" type, include all expenses (bills + laundry) but not vendor
+  const allAmount = (allExpenseAgg._sum.amount || 0) + (alertAgg._sum.amount || 0);
+  const allCount = (allExpenseAgg._count._all || 0) + (alertAgg._count._all || 0);
 
   return {
     bills: {
@@ -299,6 +336,10 @@ const computePayablesSummary = async ({ hostelId, search }) => {
     laundry: {
       total: formatAmount(laundryAmount),
       count: laundryCount,
+    },
+    all: {
+      total: formatAmount(allAmount),
+      count: allCount,
     },
     total: formatAmount(billsAmount + vendorAmount + laundryAmount),
   };
@@ -473,11 +514,11 @@ const getPayables = async (req, res) => {
         return {
           id: vendor.id,
           reference: `VENDOR-${String(vendor.id).padStart(4, '0')}`,
-          type: 'vendor',
+          type: 'Vendor',
           title: vendor.name,
           companyName: vendor.companyName,
           category: vendor.category || 'vendor',
-          amount: formatAmount(vendor.totalPayable || 0),
+          amount: formatAmount(-Math.abs(vendor.totalPayable || 0)), // Negative amount for payables
           balance: formatAmount(vendor.balance || 0),
           totalPaid: formatAmount(vendor.totalPaid || 0),
           date: vendor.createdAt,
@@ -489,7 +530,7 @@ const getPayables = async (req, res) => {
       });
 
       total = vendorsCount;
-      totalAmount = payables.reduce((sum, vendor) => sum + (vendor.amount || 0), 0);
+      totalAmount = payables.reduce((sum, vendor) => sum + Math.abs(vendor.amount || 0), 0);
     } else if (type === 'laundry') {
       const laundryFilter = buildLaundryFilter({ hostelId: parsedHostelId, search: normalizedSearch });
 
@@ -508,11 +549,11 @@ const getPayables = async (req, res) => {
 
       payables = laundryExpenses.map((expense) => ({
         id: expense.id,
-        reference: `LAUNDRY-${String(expense.id).padStart(4, '0')}`,
-        type: 'laundry',
+        reference: `EXP-${String(expense.id).padStart(4, '0')}`,
+        type: 'Expense',
         title: expense.title,
         category: expense.category,
-        amount: formatAmount(expense.amount),
+        amount: formatAmount(-Math.abs(expense.amount)), // Negative amount for expenses
         date: expense.date,
         hostel: expense.hostel?.name || null,
         description: expense.title || expense.category,
@@ -520,10 +561,14 @@ const getPayables = async (req, res) => {
       }));
 
       total = laundryCount;
-      totalAmount = payables.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-    } else {
-      // Default to bills (expenses + bill alerts)
-      const expenseFilter = buildExpenseFilter({ hostelId: parsedHostelId, search: normalizedSearch });
+      totalAmount = payables.reduce((sum, expense) => sum + Math.abs(expense.amount || 0), 0);
+    } else if (type === 'bills' || !type) {
+      // Bills view: expenses (excluding laundry) + bill alerts
+      const expenseFilter = buildExpenseFilter({ 
+        hostelId: parsedHostelId, 
+        search: normalizedSearch,
+        excludeLaundry: true 
+      });
       const alertFilter = buildAlertFilter({ hostelId: parsedHostelId, search: normalizedSearch });
 
       const [expenses, expenseCount, billAlerts] = await Promise.all([
@@ -550,10 +595,10 @@ const getPayables = async (req, res) => {
       const formattedBills = expenses.map((bill) => ({
         id: bill.id,
         reference: `EXP-${String(bill.id).padStart(4, '0')}`,
-        type: 'expense',
+        type: 'Expense',
         title: bill.title,
         category: bill.category,
-        amount: formatAmount(bill.amount),
+        amount: formatAmount(-Math.abs(bill.amount)), // Negative amount for expenses
         date: bill.date,
         hostel: bill.hostel?.name || null,
         description: bill.title || bill.category,
@@ -573,10 +618,10 @@ const getPayables = async (req, res) => {
         return {
           id: alert.id,
           reference: `ALERT-${String(alert.id).padStart(4, '0')}`,
-          type: 'alert',
+          type: 'Expense',
           title: alert.title,
           category: 'bill',
-          amount: formatAmount(alert.amount || 0),
+          amount: formatAmount(-Math.abs(alert.amount || 0)), // Negative amount
           date: alert.createdAt,
           hostel: alert.hostel?.name || null,
           tenant: alert.tenant?.name || null,
@@ -587,12 +632,83 @@ const getPayables = async (req, res) => {
 
       payables = [...formattedBills, ...formattedAlerts];
       total = expenseCount + billAlerts.length;
-      totalAmount = payables.reduce((sum, payable) => sum + (payable.amount || 0), 0);
+      totalAmount = payables.reduce((sum, payable) => sum + Math.abs(payable.amount || 0), 0);
+    } else {
+      // Default to "all" - all expenses (bills + laundry) + bill alerts, but not vendor
+      const expenseFilter = buildExpenseFilter({ 
+        hostelId: parsedHostelId, 
+        search: normalizedSearch,
+        excludeLaundry: false 
+      });
+      const alertFilter = buildAlertFilter({ hostelId: parsedHostelId, search: normalizedSearch });
+
+      const [expenses, expenseCount, billAlerts] = await Promise.all([
+        prisma.expense.findMany({
+          where: expenseFilter,
+          include: {
+            hostel: { select: { name: true } },
+          },
+          orderBy: { date: 'desc' },
+          skip,
+          take: limitNumber,
+        }),
+        prisma.expense.count({ where: expenseFilter }),
+        prisma.alert.findMany({
+          where: alertFilter,
+          include: {
+            hostel: { select: { name: true } },
+            tenant: { select: { name: true, email: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
+
+      const formattedBills = expenses.map((bill) => ({
+        id: bill.id,
+        reference: `EXP-${String(bill.id).padStart(4, '0')}`,
+        type: 'Expense',
+        title: bill.title,
+        category: bill.category,
+        amount: formatAmount(-Math.abs(bill.amount)), // Negative amount for expenses
+        date: bill.date,
+        hostel: bill.hostel?.name || null,
+        description: bill.title || bill.category,
+        status: 'Paid',
+      }));
+
+      const formattedAlerts = billAlerts.map((alert) => {
+        const statusMap = {
+          pending: 'Pending',
+          in_progress: 'Pending',
+          resolved: 'Paid',
+          dismissed: 'Paid',
+        };
+        const status = statusMap[alert.status] || 'Pending';
+
+        return {
+          id: alert.id,
+          reference: `ALERT-${String(alert.id).padStart(4, '0')}`,
+          type: 'Expense',
+          title: alert.title,
+          category: 'bill',
+          amount: formatAmount(-Math.abs(alert.amount || 0)),
+          date: alert.createdAt,
+          hostel: alert.hostel?.name || null,
+          tenant: alert.tenant?.name || null,
+          description: alert.description || alert.title,
+          status,
+        };
+      });
+
+      payables = [...formattedBills, ...formattedAlerts];
+      total = expenseCount + billAlerts.length;
+      totalAmount = payables.reduce((sum, payable) => sum + Math.abs(payable.amount || 0), 0);
     }
 
     const summary = await computePayablesSummary({
       hostelId: parsedHostelId,
       search: normalizedSearch,
+      type: type || 'bills',
     });
 
     return successResponse(
@@ -655,7 +771,7 @@ const getReceivables = async (req, res) => {
     })();
 
     const statusMap = {
-      all: RECEIVABLE_PENDING_STATUSES,
+      all: RECEIVABLE_ALL_STATUSES, // Show all payments (pending + paid)
       pending: ['pending'],
       overdue: ['overdue'],
       partial: ['partial'],
@@ -754,7 +870,7 @@ const getReceivables = async (req, res) => {
         id: payment.id,
         reference: generateReference(payment),
         type: capitalizedType,
-        amount: formatAmount(payment.amount),
+        amount: formatAmount(Math.abs(payment.amount || 0)), // Positive amount for receivables
         date: payment.paymentDate || payment.createdAt,
         tenant: payment.tenant
           ? {
@@ -772,7 +888,7 @@ const getReceivables = async (req, res) => {
     });
 
     const totalAmount = formattedReceivables.reduce(
-      (sum, item) => sum + (item.amount || 0),
+      (sum, item) => sum + Math.abs(item.amount || 0),
       0,
     );
 
@@ -822,13 +938,14 @@ const getReceivables = async (req, res) => {
  */
 const getPayablesSummary = async (req, res) => {
   try {
-    const { hostelId, search } = req.query;
+    const { hostelId, search, type } = req.query;
     const parsedHostelId = parseHostelId(hostelId);
     const normalizedSearch = typeof search === 'string' ? search.trim() : null;
 
     const summary = await computePayablesSummary({
       hostelId: parsedHostelId,
       search: normalizedSearch,
+      type: type || 'bills',
     });
 
     return successResponse(
@@ -838,6 +955,7 @@ const getPayablesSummary = async (req, res) => {
         meta: {
           hostelId: parsedHostelId,
           search: normalizedSearch || null,
+          type: type || 'bills',
         },
       },
       'Payables summary retrieved successfully',

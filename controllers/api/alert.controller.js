@@ -38,6 +38,18 @@ const getSeverity = (priority) => {
     return priorityMap[priority] || 'INFO';
 };
 
+// Helper function to map severity to priority (for backend storage)
+const getPriorityFromSeverity = (severity) => {
+    const severityMap = {
+        'DANGER': 'urgent',
+        'WARN': 'high',
+        'WARNING': 'high',
+        'INFO': 'medium',
+        'LOW': 'low'
+    };
+    return severityMap[severity?.toUpperCase()] || 'medium';
+};
+
 // Helper function to map status to display format (open/closed)
 const getStatusDisplay = (status) => {
     const statusMap = {
@@ -52,8 +64,48 @@ const getStatusDisplay = (status) => {
 // Helper function to get user display name
 const getUserDisplayName = (user) => {
     if (!user) return 'Unassigned';
-    // Use username as display name (can be enhanced to use employee profile name if available)
-    return user.username || user.email || 'Unassigned';
+    // Use username as display name (primary identifier)
+    // Format: "FirstName LastName" or "username" or "email"
+    if (user.username) {
+        // If username contains space or looks like a name, use it directly
+        if (user.username.includes(' ') || /^[A-Z][a-z]+/.test(user.username)) {
+            return user.username;
+        }
+        return user.username;
+    }
+    return user.email || 'Unassigned';
+};
+
+// Helper function to find user by name or ID
+const findUserForAssignment = async (assignedTo) => {
+    if (!assignedTo) return null;
+    
+    // If it's a number, treat as user ID
+    const userId = parseInt(assignedTo);
+    if (!isNaN(userId)) {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, username: true, email: true }
+        });
+        return user?.id || null;
+    }
+    
+    // If it's a string, search by username or email
+    const searchTerm = String(assignedTo).trim();
+    if (!searchTerm) return null;
+    
+    // Try to find user by username (case-insensitive partial match)
+    const user = await prisma.user.findFirst({
+        where: {
+            OR: [
+                { username: { contains: searchTerm, mode: 'insensitive' } },
+                { email: { contains: searchTerm, mode: 'insensitive' } }
+            ]
+        },
+        select: { id: true, username: true, email: true }
+    });
+    
+    return user?.id || null;
 };
 
 // Helper function to build search clause
@@ -82,6 +134,7 @@ const createAlert = async (req, res) => {
         const {
             type,
             priority,
+            severity, // Accept severity from frontend (DANGER, WARN, INFO)
             title,
             description,
             maintenanceType,
@@ -92,7 +145,7 @@ const createAlert = async (req, res) => {
             paymentId,
             amount,
             dueDate,
-            assignedTo,
+            assignedTo, // Can be user ID (number) or name string (e.g., "David Kim")
             metadata,
             attachments,
             remarks
@@ -122,17 +175,36 @@ const createAlert = async (req, res) => {
             }
         }
 
+        // Determine priority: use severity if provided, otherwise use priority, default to medium
+        let finalPriority = 'medium';
+        if (severity) {
+            finalPriority = getPriorityFromSeverity(severity);
+        } else if (priority) {
+            const validPriorities = ['low', 'medium', 'high', 'urgent'];
+            if (validPriorities.includes(priority)) {
+                finalPriority = priority;
+            }
+        }
+
         // Get creator ID from authenticated user
         const createdBy = req.user?.id || null;
+
+        // Find user for assignment (can be ID or name string)
+        let assignedToUserId = null;
+        if (assignedTo) {
+            assignedToUserId = await findUserForAssignment(assignedTo);
+            // If name provided but user not found, still allow creation (will be unassigned)
+            // Optionally, you can return an error here if strict validation is needed
+        }
 
         // Create alert
         const alert = await prisma.alert.create({
             data: {
                 type,
                 status: 'pending',
-                priority: priority || 'medium',
+                priority: finalPriority,
                 title,
-                description,
+                description: description || null,
                 maintenanceType: type === 'maintenance' ? maintenanceType : null,
                 hostelId: hostelId ? parseInt(hostelId) : null,
                 roomId: roomId ? parseInt(roomId) : null,
@@ -141,11 +213,11 @@ const createAlert = async (req, res) => {
                 paymentId: paymentId ? parseInt(paymentId) : null,
                 amount: amount ? parseFloat(amount) : null,
                 dueDate: dueDate ? new Date(dueDate) : null,
-                assignedTo: assignedTo ? parseInt(assignedTo) : null,
+                assignedTo: assignedToUserId,
                 createdBy,
-                metadata: metadata || null,
-                attachments: attachments || null,
-                remarks
+                metadata: metadata ? (typeof metadata === 'string' ? (() => { try { return JSON.parse(metadata); } catch { return metadata; } })() : metadata) : null,
+                attachments: attachments ? (typeof attachments === 'string' ? (() => { try { return JSON.parse(attachments); } catch { return attachments; } })() : attachments) : null,
+                remarks: remarks || null
             },
             include: {
                 hostel: { select: { id: true, name: true } },
@@ -169,12 +241,20 @@ const createAlert = async (req, res) => {
             maintenanceType: alert.maintenanceType || null,
             assignedTo: getUserDisplayName(alert.assignedUser),
             created: formatDate(alert.createdAt),
-            createdAt: alert.createdAt,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString(),
             hostel: alert.hostel?.name || null,
             room: alert.room?.roomNumber || null,
             tenant: alert.tenant?.name || null,
             amount: alert.amount || null,
-            dueDate: alert.dueDate ? formatDate(alert.dueDate) : null
+            dueDate: alert.dueDate ? formatDate(alert.dueDate) : null,
+            // Include full user object for detailed view
+            assignedUser: alert.assignedUser ? {
+                id: alert.assignedUser.id,
+                name: getUserDisplayName(alert.assignedUser),
+                username: alert.assignedUser.username,
+                email: alert.assignedUser.email
+            } : null
         };
 
         return successResponse(res, formattedAlert, 'Alert created successfully', 201);
@@ -331,8 +411,8 @@ const getAllAlerts = async (req, res) => {
             tenant: alert.tenant?.name || null,
             amount: alert.amount || null,
             dueDate: alert.dueDate ? formatDate(alert.dueDate) : null,
-            createdAt: alert.createdAt,
-            updatedAt: alert.updatedAt,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString(),
             // Include full relations for detailed view
             assignedUser: alert.assignedUser ? {
                 id: alert.assignedUser.id,
@@ -406,15 +486,16 @@ const getAlertById = async (req, res) => {
             status: getStatusDisplay(alert.status || 'pending'),
             rawStatus: alert.status || 'pending',
             maintenanceType: alert.maintenanceType || null,
-            assignedTo: alert.assignedUser ? {
+            assignedTo: getUserDisplayName(alert.assignedUser),
+            assignedUser: alert.assignedUser ? {
                 id: alert.assignedUser.id,
                 name: getUserDisplayName(alert.assignedUser),
                 username: alert.assignedUser.username,
                 email: alert.assignedUser.email
             } : null,
             created: formatDate(alert.createdAt),
-            createdAt: alert.createdAt,
-            updatedAt: alert.updatedAt,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString(),
             hostel: alert.hostel ? {
                 id: alert.hostel.id,
                 name: alert.hostel.name
@@ -499,7 +580,17 @@ const updateAlert = async (req, res) => {
 
         if (type) updateData.type = type;
         if (status) updateData.status = status;
-        if (priority) updateData.priority = priority;
+        
+        // Handle priority update - can come from priority or severity
+        if (priority) {
+            const validPriorities = ['low', 'medium', 'high', 'urgent'];
+            if (validPriorities.includes(priority)) {
+                updateData.priority = priority;
+            }
+        } else if (req.body.severity) {
+            updateData.priority = getPriorityFromSeverity(req.body.severity);
+        }
+        
         if (title) updateData.title = title;
         if (description !== undefined) updateData.description = description;
         if (maintenanceType !== undefined) updateData.maintenanceType = maintenanceType;
@@ -510,9 +601,23 @@ const updateAlert = async (req, res) => {
         if (paymentId !== undefined) updateData.paymentId = paymentId ? parseInt(paymentId) : null;
         if (amount !== undefined) updateData.amount = amount ? parseFloat(amount) : null;
         if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
-        if (assignedTo !== undefined) updateData.assignedTo = assignedTo ? parseInt(assignedTo) : null;
-        if (metadata !== undefined) updateData.metadata = metadata;
-        if (attachments !== undefined) updateData.attachments = attachments;
+        
+        // Handle assignedTo - can be ID or name string
+        if (assignedTo !== undefined) {
+            if (assignedTo === null || assignedTo === '') {
+                updateData.assignedTo = null;
+            } else {
+                const assignedUserId = await findUserForAssignment(assignedTo);
+                updateData.assignedTo = assignedUserId;
+            }
+        }
+        
+        if (metadata !== undefined) {
+            updateData.metadata = metadata ? (typeof metadata === 'string' ? (() => { try { return JSON.parse(metadata); } catch { return metadata; } })() : metadata) : null;
+        }
+        if (attachments !== undefined) {
+            updateData.attachments = attachments ? (typeof attachments === 'string' ? (() => { try { return JSON.parse(attachments); } catch { return attachments; } })() : attachments) : null;
+        }
         if (remarks !== undefined) updateData.remarks = remarks;
 
         // Update alert
@@ -541,9 +646,15 @@ const updateAlert = async (req, res) => {
             rawStatus: alert.status || 'pending',
             maintenanceType: alert.maintenanceType || null,
             assignedTo: getUserDisplayName(alert.assignedUser),
+            assignedUser: alert.assignedUser ? {
+                id: alert.assignedUser.id,
+                name: getUserDisplayName(alert.assignedUser),
+                username: alert.assignedUser.username,
+                email: alert.assignedUser.email
+            } : null,
             created: formatDate(alert.createdAt),
-            createdAt: alert.createdAt,
-            updatedAt: alert.updatedAt,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString(),
             hostel: alert.hostel?.name || null,
             room: alert.room?.roomNumber || null,
             tenant: alert.tenant?.name || null,
@@ -625,9 +736,15 @@ const updateAlertStatus = async (req, res) => {
             status: getStatusDisplay(alert.status || 'pending'),
             rawStatus: alert.status || 'pending',
             assignedTo: getUserDisplayName(alert.assignedUser),
+            assignedUser: alert.assignedUser ? {
+                id: alert.assignedUser.id,
+                name: getUserDisplayName(alert.assignedUser),
+                username: alert.assignedUser.username,
+                email: alert.assignedUser.email
+            } : null,
             created: formatDate(alert.createdAt),
-            createdAt: alert.createdAt,
-            updatedAt: alert.updatedAt
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString()
         };
 
         return successResponse(res, formattedAlert, `Alert status updated to ${status}`, 200);
@@ -649,7 +766,7 @@ const assignAlert = async (req, res) => {
         const { assignedTo } = req.body;
 
         if (!assignedTo) {
-            return errorResponse(res, 'assignedTo (user ID) is required', 400);
+            return errorResponse(res, 'assignedTo (user ID or name) is required', 400);
         }
 
         // Check if alert exists
@@ -661,20 +778,24 @@ const assignAlert = async (req, res) => {
             return errorResponse(res, 'Alert not found', 404);
         }
 
-        // Check if user exists
-        const user = await prisma.user.findUnique({
-            where: { id: parseInt(assignedTo) }
-        });
-
-        if (!user) {
-            return errorResponse(res, 'User not found', 404);
+        // Find user by ID or name
+        const assignedUserId = await findUserForAssignment(assignedTo);
+        
+        if (!assignedUserId) {
+            return errorResponse(res, 'User not found. Please provide a valid user ID or username', 404);
         }
+
+        // Get user details for response
+        const user = await prisma.user.findUnique({
+            where: { id: assignedUserId },
+            select: { id: true, username: true, email: true }
+        });
 
         // Update alert
         const alert = await prisma.alert.update({
             where: { id: parseInt(id) },
             data: {
-                assignedTo: parseInt(assignedTo),
+                assignedTo: assignedUserId,
                 status: existingAlert.status === 'pending' ? 'in_progress' : existingAlert.status
             },
             include: {
@@ -695,9 +816,15 @@ const assignAlert = async (req, res) => {
             status: getStatusDisplay(alert.status || 'pending'),
             rawStatus: alert.status || 'pending',
             assignedTo: getUserDisplayName(alert.assignedUser),
+            assignedUser: alert.assignedUser ? {
+                id: alert.assignedUser.id,
+                name: getUserDisplayName(alert.assignedUser),
+                username: alert.assignedUser.username,
+                email: alert.assignedUser.email
+            } : null,
             created: formatDate(alert.createdAt),
-            createdAt: alert.createdAt,
-            updatedAt: alert.updatedAt
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString()
         };
 
         return successResponse(res, formattedAlert, `Alert assigned to ${getUserDisplayName(user)}`, 200);
@@ -935,7 +1062,9 @@ const getOverdueAlerts = async (req, res) => {
             room: alert.room?.roomNumber || null,
             tenant: alert.tenant?.name || null,
             amount: alert.amount || null,
-            dueDate: alert.dueDate ? formatDate(alert.dueDate) : null
+            dueDate: alert.dueDate ? formatDate(alert.dueDate) : null,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString()
         }));
 
         return successResponse(res, {
