@@ -57,6 +57,7 @@ const createEmployee = async (req, res) => {
             joinDate,
             workingHours,
             hostelId,
+            reference,
             bankDetails,
             address,
             emergencyContact,
@@ -135,6 +136,7 @@ const createEmployee = async (req, res) => {
                     joinDate: new Date(joinDate),
                     workingHours,
                     hostelId: hostelId ? parseInt(hostelId) : null,
+                    reference,
                     bankDetails,
                     address,
                     emergencyContact,
@@ -371,6 +373,7 @@ const updateEmployee = async (req, res) => {
             status,
             workingHours,
             hostelId,
+            reference,
             bankDetails,
             address,
             emergencyContact,
@@ -444,6 +447,7 @@ const updateEmployee = async (req, res) => {
             if (status !== undefined) employeeUpdateData.status = status;
             if (workingHours !== undefined) employeeUpdateData.workingHours = workingHours;
             if (hostelId !== undefined) employeeUpdateData.hostelId = hostelId ? parseInt(hostelId) : null;
+            if (reference !== undefined) employeeUpdateData.reference = reference;
             if (bankDetails !== undefined) employeeUpdateData.bankDetails = bankDetails;
             if (address !== undefined) employeeUpdateData.address = address;
             if (emergencyContact !== undefined) employeeUpdateData.emergencyContact = emergencyContact;

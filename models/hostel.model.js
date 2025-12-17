@@ -22,6 +22,10 @@ const hostelSchema = new mongoose.Schema(
             type: String,
             trim: true
         },
+        mapLink: {
+            type: String,
+            trim: true
+        },
         totalFloors: {
             type: Number,
             default: 0,

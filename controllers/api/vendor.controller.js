@@ -535,6 +535,43 @@ const getVendorById = async (req, res) => {
   }
 };
 
+/**
+ * Get all vendors for a specific hostel by hostelId (path param)
+ * This is a convenience wrapper around the main listVendors logic.
+ * Route example: GET /api/admin/vendors/hostel/123
+ */
+const getVendorsByHostelId = async (req, res) => {
+  try {
+    const hostelId = parseNullableInt(req.params.hostelId);
+    if (!hostelId) {
+      return errorResponse(res, 'Valid hostelId is required', 400);
+    }
+
+    const vendors = await prisma.vendor.findMany({
+      where: { hostelId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        hostel: { select: { id: true, name: true } },
+      },
+    });
+
+    const vendorIds = vendors.map((vendor) => vendor.id);
+    const metricMaps = await fetchVendorMetrics(vendorIds);
+
+    const items = vendors.map((vendor) => serializeVendor(vendor, metricMaps));
+
+    return successResponse(
+      res,
+      items,
+      'Vendors fetched successfully for the specified hostel',
+    );
+  } catch (error) {
+    console.error('Get Vendors By Hostel Error:', error);
+    const errorMessage = error.message || 'Failed to fetch vendors by hostelId';
+    return errorResponse(res, errorMessage, 500);
+  }
+};
+
 const updateVendor = async (req, res) => {
   try {
     const vendorId = parseNullableInt(req.params.id);
@@ -754,6 +791,7 @@ module.exports = {
   createVendor,
   listVendors,
   getVendorById,
+  getVendorsByHostelId,
   updateVendor,
   deleteVendor,
   updateVendorFinancials,

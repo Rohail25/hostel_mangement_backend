@@ -606,6 +606,7 @@ const createHostel = async (req, res) => {
       name,
       address,
       description,
+      mapLink,
       amenities,
       contactInfo,
       operatingHours,
@@ -742,6 +743,7 @@ const createHostel = async (req, res) => {
           zipCode: address.zipCode || null,
         },
         description: description || null,
+        mapLink: mapLink || null,
         type: normalizedType,
         amenities: amenities || [],
         contactInfo: contactInfo
@@ -904,6 +906,7 @@ const updateHostel = async (req, res) => {
 
     if (updates.name) updateData.name = updates.name;
     if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.mapLink !== undefined) updateData.mapLink = updates.mapLink || null;
     if (updates.amenities) updateData.amenities = updates.amenities;
     if (updates.status) updateData.status = updates.status;
     if (updates.address) {

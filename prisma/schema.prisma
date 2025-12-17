@@ -568,6 +568,7 @@ model Employee {
   // Work Information
   workingHours   Json? // { startTime, endTime, workingDays: ["monday", "tuesday", ...] }
   hostelId       Int? // Hostel ID if assigned to specific hostel
+  reference      String? @db.VarChar(500) // Reference information
   
   // Bank Details
   bankDetails Json? // { bankName, accountNumber, ifscCode, branch }

@@ -4,6 +4,7 @@ const {
   createVendor,
   listVendors,
   getVendorById,
+  getVendorsByHostelId,
   updateVendor,
   deleteVendor,
   updateVendorFinancials,
@@ -33,6 +34,14 @@ router.post('/vendors', createVendor);
  * @query   search?, status?, category?, paymentTerms?, hostelId?, page?, limit?, sortBy?, sortOrder?
  */
 router.get('/vendors', listVendors);
+
+/**
+ * @route   GET /api/admin/vendors/hostel/:hostelId
+ * @desc    Get all vendors for a specific hostel
+ * @access  Admin, Manager
+ * @params  hostelId - Hostel ID
+ */
+router.get('/vendors/hostel/:hostelId', getVendorsByHostelId);
 
 /**
  * @route   GET /api/admin/vendors/:id
