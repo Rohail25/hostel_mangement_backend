@@ -29,10 +29,14 @@ const settingRoute = require("./routes/api/admin/setting.route");
 const alertRoute = require("./routes/api/admin/alert.route");
 const adminVendorRoute = require("./routes/api/admin/vendor.route");
 const vendorManagementRoute = require("./routes/api/admin/vendor-management.route");
+const vendorCategoryRoute = require("./routes/api/admin/vendor-category.route");
 const hostelRoute = require("./routes/api/admin/hostel.route");
 const roleRoute = require("./routes/api/admin/role.route");
 const permissionRoute = require("./routes/api/admin/permission.route");
 const accountsRoute = require("./routes/api/admin/accounts.route");
+const expenseRoute = require("./routes/api/admin/expense.route");
+const messRoute = require("./routes/api/admin/mess.route");
+const currencyRoute = require("./routes/api/admin/currency.route");
 
 // Load environment variables
 dotenv.config();
@@ -99,13 +103,17 @@ app.use("/api/admin", settingRoute);
 app.use("/api/admin", alertRoute);
 app.use("/api/admin", adminVendorRoute);
 app.use("/api/admin", vendorManagementRoute);
+app.use("/api/admin", vendorCategoryRoute);
 app.use("/api/admin", hostelRoute);
 app.use("/api/admin", roleRoute);
 app.use("/api/admin", permissionRoute);
 app.use("/api/admin", accountsRoute);
+app.use("/api/admin", expenseRoute);
+app.use("/api/admin", messRoute);
+app.use("/api/admin", currencyRoute);
 
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server is running on port ${PORT}`);
 });

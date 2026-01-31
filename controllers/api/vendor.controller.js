@@ -144,6 +144,8 @@ const buildRatingSummary = (aggregateRow) => {
 };
 
 const briefAddress = (address) => {
+  if (!address) return null;
+  if (typeof address === 'string') return address;
   const parsed = safeParseJson(address);
   if (!parsed) return null;
   if (typeof parsed === 'string') return parsed;
@@ -192,7 +194,8 @@ const serializeVendor = (vendor, metricMaps = {}) => {
       email: vendor.email ?? null,
     },
     hostel,
-    location: briefAddress(vendor.address),
+    address: vendor.address || briefAddress(vendor.address),
+    location: vendor.location,
     financials: {
       totalPayable: vendor.totalPayable ?? 0,
       totalPaid: vendor.totalPaid ?? 0,
@@ -240,6 +243,7 @@ const createVendor = async (req, res) => {
     const {
       name,
       companyName,
+      address, // Simple address string
       email,
       phone,
       alternatePhone,
@@ -248,11 +252,11 @@ const createVendor = async (req, res) => {
       specialty, // Accept specialty field from frontend
       services,
       contactPerson,
-      address,
+      location, // Google Map link
+      attachments, // File attachments
       paymentTerms,
       creditLimit,
       hostelId,
-      documents,
       notes,
       status,
       rating, // Optional initial rating (1-5)
@@ -290,6 +294,7 @@ const createVendor = async (req, res) => {
       data: {
         name,
         companyName: companyName || null,
+        address: address || null,
         email: email || null,
         phone: phone || null,
         alternatePhone: alternatePhone || null,
@@ -297,11 +302,11 @@ const createVendor = async (req, res) => {
         category: finalCategory || null,
         services: servicesPayload.length ? servicesPayload : ensureJsonValue(services),
         contactPerson: ensureJsonValue(contactPerson),
-        address: ensureJsonValue(address),
+        location: location || null,
+        attachments: ensureJsonValue(attachments),
         paymentTerms: normalizePaymentTerms(paymentTerms) || 'net30',
         creditLimit: parseNullableFloat(creditLimit) ?? 0,
         hostelId: parseNullableInt(hostelId),
-        documents: ensureJsonValue(documents),
         notes: notes || null,
         status: normalizeStatus(status) || 'active',
       },
@@ -579,6 +584,7 @@ const updateVendor = async (req, res) => {
     const data = {
       name: updates.name ?? existing.name,
       companyName: updates.companyName ?? existing.companyName,
+      address: updates.address !== undefined ? updates.address : existing.address,
       email: updates.email ?? existing.email,
       phone: updates.phone ?? existing.phone,
       alternatePhone: updates.alternatePhone ?? existing.alternatePhone,
@@ -592,7 +598,9 @@ const updateVendor = async (req, res) => {
           : existing.services,
       contactPerson:
         updates.contactPerson !== undefined ? ensureJsonValue(updates.contactPerson) : existing.contactPerson,
-      address: updates.address !== undefined ? ensureJsonValue(updates.address) : existing.address,
+      location: updates.location !== undefined ? updates.location : existing.location,
+      attachments:
+        updates.attachments !== undefined ? ensureJsonValue(updates.attachments) : existing.attachments,
       paymentTerms:
         updates.paymentTerms !== undefined
           ? normalizePaymentTerms(updates.paymentTerms) || existing.paymentTerms
@@ -605,8 +613,6 @@ const updateVendor = async (req, res) => {
         updates.hostelId !== undefined
           ? parseNullableInt(updates.hostelId)
           : existing.hostelId,
-      documents:
-        updates.documents !== undefined ? ensureJsonValue(updates.documents) : existing.documents,
       notes: updates.notes !== undefined ? updates.notes : existing.notes,
       status:
         updates.status !== undefined

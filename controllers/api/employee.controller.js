@@ -61,16 +61,149 @@ const createEmployee = async (req, res) => {
             address,
             emergencyContact,
             qualifications,
-            notes
+            notes,
+            // New fields
+            fatherName,
+            whatsappNumber,
+            // Professional fields
+            professionType,
+            academicName,
+            academicAddress,
+            academicLocation,
+            studentCardNo,
+            jobTitle,
+            companyName,
+            jobAddress,
+            jobLocation,
+            jobIdNo,
+            businessName,
+            businessAddress,
+            businessLocation,
+            professionDescription,
+            // Emergency fields
+            emergencyContactName,
+            emergencyContactNumber,
+            emergencyContactWhatsapp,
+            emergencyContactRelation,
+            emergencyContactRelationOther,
+            anyDisease,
+            bloodGroup,
+            nearestRelativeContact,
+            nearestRelativeWhatsapp,
+            nearestRelativeRelation,
+            nearestRelativeRelationOther
         } = req.body;
 
+        // Handle uploaded files - when using uploadAny.any(), files come as an array
+        // Group files by fieldname
+        const filesByField = {};
+        if (req.files && Array.isArray(req.files)) {
+            req.files.forEach(file => {
+                if (!filesByField[file.fieldname]) {
+                    filesByField[file.fieldname] = [];
+                }
+                filesByField[file.fieldname].push(file);
+            });
+        } else if (req.files) {
+            // Fallback for when files come as object (upload.fields format)
+            Object.keys(req.files).forEach(fieldname => {
+                filesByField[fieldname] = Array.isArray(req.files[fieldname]) 
+                    ? req.files[fieldname] 
+                    : [req.files[fieldname]];
+            });
+        }
+
         // Handle uploaded files
-        const profilePhoto = req.files?.profilePhoto?.[0]
-            ? `/uploads/employees/${req.files.profilePhoto[0].filename}`
+        const profilePhoto = filesByField.profilePhoto?.[0]
+            ? `/uploads/employees/${filesByField.profilePhoto[0].filename}`
             : null;
 
-        // Handle document uploads
-        const uploadedDocs = req.files?.documents || [];
+        // Handle CNIC documents (max 2 images)
+        const cnicFiles = filesByField.cnicDocuments || [];
+        const cnicDocuments = cnicFiles.slice(0, 2).map(file => ({
+            field: 'cnicDocuments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+
+        // Handle Agreement document (1 image)
+        const agreementFile = filesByField.agreementDocument?.[0];
+        const agreementDocument = agreementFile ? [{
+            field: 'agreementDocument',
+            url: `/uploads/employees/${agreementFile.filename}`,
+            filename: agreementFile.filename,
+            originalName: agreementFile.originalname,
+            mimetype: agreementFile.mimetype,
+            size: agreementFile.size,
+            uploadedAt: new Date().toISOString(),
+        }] : null;
+
+        // Handle Police Character Certificate (1 image)
+        const policeFile = filesByField.policeCharacterCertificate?.[0];
+        const policeCharacterCertificate = policeFile ? [{
+            field: 'policeCharacterCertificate',
+            url: `/uploads/employees/${policeFile.filename}`,
+            filename: policeFile.filename,
+            originalName: policeFile.originalname,
+            mimetype: policeFile.mimetype,
+            size: policeFile.size,
+            uploadedAt: new Date().toISOString(),
+        }] : null;
+
+        // Handle Any Other documents (multiple files)
+        const anyOtherFiles = filesByField.anyOtherDocuments || [];
+        const anyOtherDocuments = anyOtherFiles.map(file => ({
+            field: 'anyOtherDocuments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+
+        // Handle academic attachments
+        const academicFiles = filesByField.academicAttachments || [];
+        const academicAttachments = academicFiles.map(file => ({
+            field: 'academicAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+
+        // Handle job attachments
+        const jobFiles = filesByField.jobAttachments || [];
+        const jobAttachments = jobFiles.map(file => ({
+            field: 'jobAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+
+        // Handle business attachments
+        const businessFiles = filesByField.businessAttachments || [];
+        const businessAttachments = businessFiles.map(file => ({
+            field: 'businessAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+
+        // Handle document uploads (keep for backward compatibility)
+        const uploadedDocs = filesByField.documents || [];
         const providedDocuments = req.body.documents 
             ? (Array.isArray(req.body.documents) ? req.body.documents : parseDocumentsList(req.body.documents))
             : [];
@@ -85,6 +218,27 @@ const createEmployee = async (req, res) => {
         const allDocuments = providedDocuments.length || fileDocuments.length 
             ? [...providedDocuments, ...fileDocuments] 
             : null;
+
+        // Build emergency contact JSON
+        let emergencyContactData = emergencyContact ? (typeof emergencyContact === 'string' ? JSON.parse(emergencyContact) : emergencyContact) : {};
+        if (emergencyContactName || emergencyContactNumber || emergencyContactRelation) {
+            emergencyContactData.name = emergencyContactName || emergencyContactData.name || null;
+            emergencyContactData.phone = emergencyContactNumber || emergencyContactData.phone || null;
+            emergencyContactData.relationship = emergencyContactRelation || emergencyContactData.relationship || null;
+            emergencyContactData.whatsappNumber = emergencyContactWhatsapp || emergencyContactData.whatsappNumber || null;
+            emergencyContactData.relationOther = emergencyContactRelationOther || emergencyContactData.relationOther || null;
+        }
+
+        // Build nearest relative JSON
+        let nearestRelativeData = null;
+        if (nearestRelativeContact || nearestRelativeWhatsapp || nearestRelativeRelation) {
+            nearestRelativeData = {
+                contactNumber: nearestRelativeContact || null,
+                whatsappNumber: nearestRelativeWhatsapp || null,
+                relation: nearestRelativeRelation || null,
+                relationOther: nearestRelativeRelationOther || null,
+            };
+        }
 
         // Validation
         const userName = username || name; // Support both name and username for backward compatibility
@@ -130,6 +284,8 @@ const createEmployee = async (req, res) => {
                     role: employeeRole || 'staff',
                     department,
                     designation,
+                    fatherName: fatherName || null,
+                    whatsappNumber: whatsappNumber || null,
                     salary: parseFloat(salary),
                     salaryType: salaryType || 'monthly',
                     joinDate: new Date(joinDate),
@@ -137,10 +293,37 @@ const createEmployee = async (req, res) => {
                     hostelId: hostelId ? parseInt(hostelId) : null,
                     bankDetails,
                     address,
-                    emergencyContact,
+                    emergencyContact: Object.keys(emergencyContactData).length > 0 ? emergencyContactData : (emergencyContact || null),
+                    emergencyContactWhatsapp: emergencyContactWhatsapp || null,
+                    emergencyContactRelationOther: emergencyContactRelationOther || null,
+                    anyDisease: anyDisease || null,
+                    bloodGroup: bloodGroup || null,
+                    nearestRelative: nearestRelativeData,
                     qualifications,
                     profilePhoto: profilePhoto || null,
                     documents: allDocuments,
+                    cnicDocuments: cnicDocuments.length > 0 ? cnicDocuments : null,
+                    agreementDocument: agreementDocument,
+                    policeCharacterCertificate: policeCharacterCertificate,
+                    anyOtherDocuments: anyOtherDocuments.length > 0 ? anyOtherDocuments : null,
+                    // Professional fields
+                    professionType: professionType || null,
+                    academicName: academicName || null,
+                    academicAddress: academicAddress || null,
+                    academicLocation: academicLocation || null,
+                    studentCardNo: studentCardNo || null,
+                    academicAttachments: academicAttachments.length > 0 ? academicAttachments : null,
+                    jobTitle: jobTitle || null,
+                    companyName: companyName || null,
+                    jobAddress: jobAddress || null,
+                    jobLocation: jobLocation || null,
+                    jobIdNo: jobIdNo || null,
+                    jobAttachments: jobAttachments.length > 0 ? jobAttachments : null,
+                    businessName: businessName || null,
+                    businessAddress: businessAddress || null,
+                    businessLocation: businessLocation || null,
+                    businessAttachments: businessAttachments.length > 0 ? businessAttachments : null,
+                    professionDescription: professionDescription || null,
                     notes,
                     status: 'active'
                 }
@@ -357,6 +540,7 @@ const updateEmployee = async (req, res) => {
             username,
             email,
             phone,
+            password,
             userRoleId,
             
             // Employee data
@@ -375,7 +559,37 @@ const updateEmployee = async (req, res) => {
             address,
             emergencyContact,
             qualifications,
-            notes
+            notes,
+            // New fields
+            fatherName,
+            whatsappNumber,
+            // Professional fields
+            professionType,
+            academicName,
+            academicAddress,
+            academicLocation,
+            studentCardNo,
+            jobTitle,
+            companyName,
+            jobAddress,
+            jobLocation,
+            jobIdNo,
+            businessName,
+            businessAddress,
+            businessLocation,
+            professionDescription,
+            // Emergency fields
+            emergencyContactName,
+            emergencyContactNumber,
+            emergencyContactWhatsapp,
+            emergencyContactRelation,
+            emergencyContactRelationOther,
+            anyDisease,
+            bloodGroup,
+            nearestRelativeContact,
+            nearestRelativeWhatsapp,
+            nearestRelativeRelation,
+            nearestRelativeRelationOther
         } = req.body;
 
         // Check if employee exists
@@ -388,13 +602,144 @@ const updateEmployee = async (req, res) => {
             return errorResponse(res, 'Employee not found', 404);
         }
 
+        // Handle uploaded files - when using uploadAny.any(), files come as an array
+        // Group files by fieldname
+        const filesByField = {};
+        if (req.files && Array.isArray(req.files)) {
+            req.files.forEach(file => {
+                if (!filesByField[file.fieldname]) {
+                    filesByField[file.fieldname] = [];
+                }
+                filesByField[file.fieldname].push(file);
+            });
+        } else if (req.files) {
+            // Fallback for when files come as object (upload.fields format)
+            Object.keys(req.files).forEach(fieldname => {
+                filesByField[fieldname] = Array.isArray(req.files[fieldname]) 
+                    ? req.files[fieldname] 
+                    : [req.files[fieldname]];
+            });
+        }
+
         // Handle uploaded files
-        const profilePhoto = req.files?.profilePhoto?.[0]
-            ? `/uploads/employees/${req.files.profilePhoto[0].filename}`
+        const profilePhoto = filesByField.profilePhoto?.[0]
+            ? `/uploads/employees/${filesByField.profilePhoto[0].filename}`
             : undefined;
 
-        // Handle document uploads
-        const uploadedDocs = req.files?.documents || [];
+        // Handle CNIC documents
+        const cnicFiles = filesByField.cnicDocuments || [];
+        const existingCnic = existingEmployee.cnicDocuments ? parseDocumentsList(existingEmployee.cnicDocuments) : [];
+        const newCnicDocuments = cnicFiles.slice(0, 2).map(file => ({
+            field: 'cnicDocuments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+        const mergedCnicDocuments = newCnicDocuments.length > 0 
+            ? [...existingCnic, ...newCnicDocuments].slice(0, 2) // Keep max 2
+            : (existingCnic.length > 0 ? existingCnic : null);
+
+        // Handle Agreement document
+        const agreementFile = filesByField.agreementDocument?.[0];
+        const existingAgreement = existingEmployee.agreementDocument ? parseDocumentsList(existingEmployee.agreementDocument) : [];
+        const newAgreementDocument = agreementFile ? [{
+            field: 'agreementDocument',
+            url: `/uploads/employees/${agreementFile.filename}`,
+            filename: agreementFile.filename,
+            originalName: agreementFile.originalname,
+            mimetype: agreementFile.mimetype,
+            size: agreementFile.size,
+            uploadedAt: new Date().toISOString(),
+        }] : [];
+        const mergedAgreementDocument = newAgreementDocument.length > 0
+            ? [...existingAgreement, ...newAgreementDocument]
+            : (existingAgreement.length > 0 ? existingAgreement : null);
+
+        // Handle Police Character Certificate
+        const policeFile = filesByField.policeCharacterCertificate?.[0];
+        const existingPolice = existingEmployee.policeCharacterCertificate ? parseDocumentsList(existingEmployee.policeCharacterCertificate) : [];
+        const newPoliceCertificate = policeFile ? [{
+            field: 'policeCharacterCertificate',
+            url: `/uploads/employees/${policeFile.filename}`,
+            filename: policeFile.filename,
+            originalName: policeFile.originalname,
+            mimetype: policeFile.mimetype,
+            size: policeFile.size,
+            uploadedAt: new Date().toISOString(),
+        }] : [];
+        const mergedPoliceCertificate = newPoliceCertificate.length > 0
+            ? [...existingPolice, ...newPoliceCertificate]
+            : (existingPolice.length > 0 ? existingPolice : null);
+
+        // Handle Any Other documents
+        const anyOtherFiles = filesByField.anyOtherDocuments || [];
+        const existingAnyOther = existingEmployee.anyOtherDocuments ? parseDocumentsList(existingEmployee.anyOtherDocuments) : [];
+        const newAnyOtherDocuments = anyOtherFiles.map(file => ({
+            field: 'anyOtherDocuments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+        const mergedAnyOtherDocuments = newAnyOtherDocuments.length > 0
+            ? [...existingAnyOther, ...newAnyOtherDocuments]
+            : (existingAnyOther.length > 0 ? existingAnyOther : null);
+
+        // Handle academic attachments
+        const academicFiles = filesByField.academicAttachments || [];
+        const existingAcademic = existingEmployee.academicAttachments ? parseDocumentsList(existingEmployee.academicAttachments) : [];
+        const newAcademicAttachments = academicFiles.map(file => ({
+            field: 'academicAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+        const mergedAcademicAttachments = newAcademicAttachments.length > 0
+            ? [...existingAcademic, ...newAcademicAttachments]
+            : (existingAcademic.length > 0 ? existingAcademic : null);
+
+        // Handle job attachments
+        const jobFiles = filesByField.jobAttachments || [];
+        const existingJob = existingEmployee.jobAttachments ? parseDocumentsList(existingEmployee.jobAttachments) : [];
+        const newJobAttachments = jobFiles.map(file => ({
+            field: 'jobAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+        const mergedJobAttachments = newJobAttachments.length > 0
+            ? [...existingJob, ...newJobAttachments]
+            : (existingJob.length > 0 ? existingJob : null);
+
+        // Handle business attachments
+        const businessFiles = filesByField.businessAttachments || [];
+        const existingBusiness = existingEmployee.businessAttachments ? parseDocumentsList(existingEmployee.businessAttachments) : [];
+        const newBusinessAttachments = businessFiles.map(file => ({
+            field: 'businessAttachments',
+            url: `/uploads/employees/${file.filename}`,
+            filename: file.filename,
+            originalName: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date().toISOString(),
+        }));
+        const mergedBusinessAttachments = newBusinessAttachments.length > 0
+            ? [...existingBusiness, ...newBusinessAttachments]
+            : (existingBusiness.length > 0 ? existingBusiness : null);
+
+        // Handle document uploads (keep for backward compatibility)
+        const uploadedDocs = filesByField.documents || [];
         const existingDocuments = existingEmployee.documents ? parseDocumentsList(existingEmployee.documents) : [];
         
         let allDocuments = undefined;
@@ -413,6 +758,34 @@ const updateEmployee = async (req, res) => {
             allDocuments = [...providedDocuments, ...fileDocuments];
         }
 
+        // Build emergency contact JSON
+        let emergencyContactData = existingEmployee.emergencyContact ? (typeof existingEmployee.emergencyContact === 'string' ? JSON.parse(existingEmployee.emergencyContact) : existingEmployee.emergencyContact) : {};
+        if (emergencyContactName !== undefined || emergencyContactNumber !== undefined || emergencyContactRelation !== undefined) {
+            if (emergencyContactName !== undefined) emergencyContactData.name = emergencyContactName || null;
+            if (emergencyContactNumber !== undefined) emergencyContactData.phone = emergencyContactNumber || null;
+            if (emergencyContactRelation !== undefined) emergencyContactData.relationship = emergencyContactRelation || null;
+            if (emergencyContactWhatsapp !== undefined) emergencyContactData.whatsappNumber = emergencyContactWhatsapp || null;
+            if (emergencyContactRelationOther !== undefined) emergencyContactData.relationOther = emergencyContactRelationOther || null;
+        } else if (emergencyContact !== undefined) {
+            emergencyContactData = typeof emergencyContact === 'string' ? JSON.parse(emergencyContact) : emergencyContact;
+        }
+
+        // Build nearest relative JSON
+        let nearestRelativeData = existingEmployee.nearestRelative ? (typeof existingEmployee.nearestRelative === 'string' ? JSON.parse(existingEmployee.nearestRelative) : existingEmployee.nearestRelative) : null;
+        if (nearestRelativeContact !== undefined || nearestRelativeWhatsapp !== undefined || nearestRelativeRelation !== undefined) {
+            nearestRelativeData = nearestRelativeData || {};
+            if (nearestRelativeContact !== undefined) nearestRelativeData.contactNumber = nearestRelativeContact || null;
+            if (nearestRelativeWhatsapp !== undefined) nearestRelativeData.whatsappNumber = nearestRelativeWhatsapp || null;
+            if (nearestRelativeRelation !== undefined) nearestRelativeData.relation = nearestRelativeRelation || null;
+            if (nearestRelativeRelationOther !== undefined) nearestRelativeData.relationOther = nearestRelativeRelationOther || null;
+        }
+
+        // Update password if provided
+        let hashedPassword = null;
+        if (password) {
+            hashedPassword = await bcrypt.hash(password, 10);
+        }
+
         // Update in transaction
         const result = await prisma.$transaction(async (tx) => {
             // Update user if user data is provided
@@ -422,6 +795,7 @@ const updateEmployee = async (req, res) => {
             if (email) userUpdateData.email = email;
             if (phone) userUpdateData.phone = phone;
             if (userRoleId !== undefined) userUpdateData.userRoleId = userRoleId ? parseInt(userRoleId) : null;
+            if (hashedPassword) userUpdateData.password = hashedPassword;
 
             let updatedUser = existingEmployee.user;
             if (Object.keys(userUpdateData).length > 0) {
@@ -437,6 +811,8 @@ const updateEmployee = async (req, res) => {
             if (employeeRole !== undefined) employeeUpdateData.role = employeeRole;
             if (department !== undefined) employeeUpdateData.department = department;
             if (designation !== undefined) employeeUpdateData.designation = designation;
+            if (fatherName !== undefined) employeeUpdateData.fatherName = fatherName || null;
+            if (whatsappNumber !== undefined) employeeUpdateData.whatsappNumber = whatsappNumber || null;
             if (salary !== undefined) employeeUpdateData.salary = parseFloat(salary);
             if (salaryType !== undefined) employeeUpdateData.salaryType = salaryType;
             if (joinDate !== undefined) employeeUpdateData.joinDate = new Date(joinDate);
@@ -446,10 +822,39 @@ const updateEmployee = async (req, res) => {
             if (hostelId !== undefined) employeeUpdateData.hostelId = hostelId ? parseInt(hostelId) : null;
             if (bankDetails !== undefined) employeeUpdateData.bankDetails = bankDetails;
             if (address !== undefined) employeeUpdateData.address = address;
-            if (emergencyContact !== undefined) employeeUpdateData.emergencyContact = emergencyContact;
+            if (Object.keys(emergencyContactData).length > 0 || emergencyContact !== undefined) {
+                employeeUpdateData.emergencyContact = Object.keys(emergencyContactData).length > 0 ? emergencyContactData : (emergencyContact || null);
+            }
+            if (emergencyContactWhatsapp !== undefined) employeeUpdateData.emergencyContactWhatsapp = emergencyContactWhatsapp || null;
+            if (emergencyContactRelationOther !== undefined) employeeUpdateData.emergencyContactRelationOther = emergencyContactRelationOther || null;
+            if (anyDisease !== undefined) employeeUpdateData.anyDisease = anyDisease || null;
+            if (bloodGroup !== undefined) employeeUpdateData.bloodGroup = bloodGroup || null;
+            if (nearestRelativeData !== null || nearestRelativeData !== undefined) employeeUpdateData.nearestRelative = nearestRelativeData;
             if (qualifications !== undefined) employeeUpdateData.qualifications = qualifications;
             if (profilePhoto !== undefined) employeeUpdateData.profilePhoto = profilePhoto || existingEmployee.profilePhoto;
             if (allDocuments !== undefined) employeeUpdateData.documents = allDocuments;
+            if (mergedCnicDocuments !== undefined) employeeUpdateData.cnicDocuments = mergedCnicDocuments;
+            if (mergedAgreementDocument !== undefined) employeeUpdateData.agreementDocument = mergedAgreementDocument;
+            if (mergedPoliceCertificate !== undefined) employeeUpdateData.policeCharacterCertificate = mergedPoliceCertificate;
+            if (mergedAnyOtherDocuments !== undefined) employeeUpdateData.anyOtherDocuments = mergedAnyOtherDocuments;
+            // Professional fields
+            if (professionType !== undefined) employeeUpdateData.professionType = professionType || null;
+            if (academicName !== undefined) employeeUpdateData.academicName = academicName || null;
+            if (academicAddress !== undefined) employeeUpdateData.academicAddress = academicAddress || null;
+            if (academicLocation !== undefined) employeeUpdateData.academicLocation = academicLocation || null;
+            if (studentCardNo !== undefined) employeeUpdateData.studentCardNo = studentCardNo || null;
+            if (mergedAcademicAttachments !== undefined) employeeUpdateData.academicAttachments = mergedAcademicAttachments;
+            if (jobTitle !== undefined) employeeUpdateData.jobTitle = jobTitle || null;
+            if (companyName !== undefined) employeeUpdateData.companyName = companyName || null;
+            if (jobAddress !== undefined) employeeUpdateData.jobAddress = jobAddress || null;
+            if (jobLocation !== undefined) employeeUpdateData.jobLocation = jobLocation || null;
+            if (jobIdNo !== undefined) employeeUpdateData.jobIdNo = jobIdNo || null;
+            if (mergedJobAttachments !== undefined) employeeUpdateData.jobAttachments = mergedJobAttachments;
+            if (businessName !== undefined) employeeUpdateData.businessName = businessName || null;
+            if (businessAddress !== undefined) employeeUpdateData.businessAddress = businessAddress || null;
+            if (businessLocation !== undefined) employeeUpdateData.businessLocation = businessLocation || null;
+            if (mergedBusinessAttachments !== undefined) employeeUpdateData.businessAttachments = mergedBusinessAttachments;
+            if (professionDescription !== undefined) employeeUpdateData.professionDescription = professionDescription || null;
             if (notes !== undefined) employeeUpdateData.notes = notes;
 
             const updatedEmployee = await tx.employee.update({
@@ -794,6 +1199,10 @@ const employeeDetails = async (req, res) => {
         const hostel = emp.hostel;
 
         const employeeDocuments = parseDocumentsList(emp.documents);
+        const cnicDocuments = parseDocumentsList(emp.cnicDocuments);
+        const agreementDocument = parseDocumentsList(emp.agreementDocument);
+        const policeCharacterCertificate = parseDocumentsList(emp.policeCharacterCertificate);
+        const anyOtherDocuments = parseDocumentsList(emp.anyOtherDocuments);
 
         let currentScore = null;
         try {
@@ -828,6 +1237,8 @@ const employeeDetails = async (req, res) => {
             status: formattedStatus,
             profilePhoto: emp.profilePhoto ?? null,
             avatar: emp.profilePhoto ?? null,
+            fatherName: emp.fatherName ?? null,
+            whatsappNumber: emp.whatsappNumber ?? null,
             joinDate: emp.joinDate ? emp.joinDate.toISOString().split('T')[0] : null,
             terminationDate: emp.terminationDate
                 ? emp.terminationDate.toISOString().split('T')[0]
@@ -848,9 +1259,36 @@ const employeeDetails = async (req, res) => {
             bankDetails: emp.bankDetails ?? null,
             address: emp.address ?? null,
             emergencyContact: emp.emergencyContact ?? null,
+            emergencyContactWhatsapp: emp.emergencyContactWhatsapp ?? null,
+            emergencyContactRelationOther: emp.emergencyContactRelationOther ?? null,
+            anyDisease: emp.anyDisease ?? null,
+            bloodGroup: emp.bloodGroup ?? null,
+            nearestRelative: emp.nearestRelative ?? null,
             qualifications: emp.qualifications ?? null,
             notes: emp.notes ?? null,
             documents: employeeDocuments,
+            cnicDocuments: cnicDocuments,
+            agreementDocument: agreementDocument,
+            policeCharacterCertificate: policeCharacterCertificate,
+            anyOtherDocuments: anyOtherDocuments,
+            // Professional fields
+            professionType: emp.professionType ?? null,
+            academicName: emp.academicName ?? null,
+            academicAddress: emp.academicAddress ?? null,
+            academicLocation: emp.academicLocation ?? null,
+            studentCardNo: emp.studentCardNo ?? null,
+            academicAttachments: emp.academicAttachments ?? null,
+            jobTitle: emp.jobTitle ?? null,
+            companyName: emp.companyName ?? null,
+            jobAddress: emp.jobAddress ?? null,
+            jobLocation: emp.jobLocation ?? null,
+            jobIdNo: emp.jobIdNo ?? null,
+            jobAttachments: emp.jobAttachments ?? null,
+            businessName: emp.businessName ?? null,
+            businessAddress: emp.businessAddress ?? null,
+            businessLocation: emp.businessLocation ?? null,
+            businessAttachments: emp.businessAttachments ?? null,
+            professionDescription: emp.professionDescription ?? null,
             uploads: buildUploads(emp.profilePhoto, emp.documents),
             score: currentScore,
         });

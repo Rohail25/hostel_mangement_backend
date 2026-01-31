@@ -729,6 +729,157 @@ const updateAllocation = async (req, res) => {
     }
 };
 
+// ===================================
+// UPDATE BED ALLOCATION
+// ===================================
+const updateBedAllocation = async (req, res) => {
+    try {
+        const bedId = parseInt(req.params.id, 10);
+        const { newBedId } = req.body;
+
+        // Validation
+        if (!Number.isFinite(bedId)) {
+            return errorResponse(res, "Invalid bed ID", 400);
+        }
+
+        if (!Number.isFinite(parseInt(newBedId, 10))) {
+            return errorResponse(res, "New bed ID is required", 400);
+        }
+
+        const newBedIdInt = parseInt(newBedId, 10);
+
+        // Check access to current bed
+        const bedAccess = await assertBedAccess(req, bedId);
+        if (!bedAccess.ok) {
+            return errorResponse(res, bedAccess.message, bedAccess.status);
+        }
+
+        // Check access to new bed
+        const newBedAccess = await assertBedAccess(req, newBedIdInt);
+        if (!newBedAccess.ok) {
+            return errorResponse(res, newBedAccess.message, newBedAccess.status);
+        }
+
+        // Check if new bed is available
+        const newBed = await prisma.bed.findUnique({
+            where: { id: newBedIdInt },
+            select: { 
+                id: true, 
+                status: true, 
+                currentTenantId: true,
+                bedNumber: true,
+                room: {
+                    select: {
+                        roomNumber: true,
+                        floor: {
+                            select: { floorNumber: true }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!newBed) {
+            return errorResponse(res, "New bed not found", 404);
+        }
+
+        if (newBed.status === 'occupied' && newBed.currentTenantId) {
+            return errorResponse(res, "New bed is already occupied", 400);
+        }
+
+        // Get current bed details
+        const currentBed = await prisma.bed.findUnique({
+            where: { id: bedId },
+            select: { 
+                id: true, 
+                currentTenantId: true,
+                status: true
+            }
+        });
+
+        if (!currentBed) {
+            return errorResponse(res, "Current bed not found", 404);
+        }
+
+        // If current bed has a tenant, update the allocation
+        if (currentBed.currentTenantId) {
+            // Find active allocation for this bed
+            const allocation = await prisma.allocation.findFirst({
+                where: {
+                    bedId: bedId,
+                    status: 'active'
+                }
+            });
+
+            if (allocation) {
+                // Update allocation to new bed
+                await prisma.allocation.update({
+                    where: { id: allocation.id },
+                    data: {
+                        bedId: newBedIdInt,
+                        roomId: newBed.room ? allocation.roomId : allocation.roomId, // Keep same room if structure exists
+                    }
+                });
+            }
+
+            // Update bed statuses
+            await prisma.$transaction([
+                // Update current bed - make it available
+                prisma.bed.update({
+                    where: { id: bedId },
+                    data: {
+                        status: 'available',
+                        currentTenantId: null
+                    }
+                }),
+                // Update new bed - make it occupied
+                prisma.bed.update({
+                    where: { id: newBedIdInt },
+                    data: {
+                        status: 'occupied',
+                        currentTenantId: currentBed.currentTenantId
+                    }
+                })
+            ]);
+        } else {
+            // No tenant on current bed, just update bed assignment (for future planning)
+            // This case handles moving empty bed assignments
+            return errorResponse(res, "Current bed has no tenant assigned", 400);
+        }
+
+        const updatedBed = await prisma.bed.findUnique({
+            where: { id: newBedIdInt },
+            include: {
+                room: {
+                    select: {
+                        id: true,
+                        roomNumber: true,
+                        floor: {
+                            select: {
+                                id: true,
+                                floorNumber: true,
+                                floorName: true
+                            }
+                        }
+                    }
+                },
+                currentTenant: {
+                    select: {
+                        id: true,
+                        username: true,
+                        email: true
+                    }
+                }
+            }
+        });
+
+        return successResponse(res, updatedBed, "Bed allocation updated successfully", 200);
+    } catch (err) {
+        console.error("Update Bed Allocation Error:", err);
+        return errorResponse(res, err.message, 400);
+    }
+};
+
 module.exports = {
     allocateTenant,
     checkOutTenant,
@@ -736,5 +887,6 @@ module.exports = {
     getAllAllocations,
     getAllocationById,
     getActiveAllocationsByHostel,
-    updateAllocation
+    updateAllocation,
+    updateBedAllocation
 };

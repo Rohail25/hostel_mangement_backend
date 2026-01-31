@@ -89,9 +89,26 @@ const assertBedAccess = async (req, bedId) => {
     const bed = await prisma.bed.findUnique({
         where: { id: bedId },
         include: {
-            hostel: { select: { id: true, ownerId: true, managedBy: true } },
-            floor: { select: { id: true, hostelId: true } },
-            room: { select: { id: true, hostelId: true, floorId: true } }
+            room: { 
+                select: { 
+                    id: true, 
+                    hostelId: true, 
+                    floorId: true,
+                    hostel: { 
+                        select: { 
+                            id: true, 
+                            ownerId: true, 
+                            managedBy: true 
+                        } 
+                    },
+                    floor: { 
+                        select: { 
+                            id: true, 
+                            hostelId: true 
+                        } 
+                    }
+                } 
+            }
         }
     });
 
@@ -99,11 +116,11 @@ const assertBedAccess = async (req, bedId) => {
         return { ok: false, status: 404, message: "Bed not found" };
     }
 
-    if (req.userRole === 'owner' && bed.hostel.ownerId !== req.userId) {
+    if (req.userRole === 'owner' && bed.room.hostel.ownerId !== req.userId) {
         return { ok: false, status: 403, message: "You are not allowed to manage this bed" };
     }
 
-    if (req.userRole === 'manager' && bed.hostel.managedBy !== req.userId) {
+    if (req.userRole === 'manager' && bed.room.hostel.managedBy !== req.userId) {
         return { ok: false, status: 403, message: "You are not allowed to manage this bed" };
     }
 

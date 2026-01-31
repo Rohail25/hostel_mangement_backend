@@ -11,7 +11,8 @@ const {
     getAllAllocations,
     getAllocationById,
     getActiveAllocationsByHostel,
-    updateAllocation
+    updateAllocation,
+    updateBedAllocation
 } = require('../../../controllers/api/allocation.controller');
 const { authenticate, authorize } = require('../../../middleware/auth.middleware');
 
@@ -37,6 +38,9 @@ router.get('/allocation/:id', authenticate, authorize('admin', 'manager', 'owner
 
 // Update allocation (Admin & Manager only)
 router.put('/allocation/:id', authenticate, authorize('admin', 'manager', 'owner'), updateAllocation);
+
+// Update bed allocation - change which bed a tenant is assigned to (Admin & Manager only)
+router.put('/allocation/bed/:id', authenticate, authorize('admin', 'manager', 'owner'), updateBedAllocation);
 
 module.exports = router;
 

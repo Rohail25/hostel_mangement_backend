@@ -1083,6 +1083,119 @@ const getOverdueAlerts = async (req, res) => {
     }
 };
 
+/**
+ * @route   GET /api/admin/alerts/unassigned
+ * @desc    Get all unassigned alerts (assignedTo is null)
+ * @access  Admin, Manager
+ */
+const getUnassignedAlerts = async (req, res) => {
+    try {
+        const {
+            hostelId,
+            type,
+            status,
+            priority,
+            page = 1,
+            limit = 20,
+            sortBy = 'createdAt',
+            sortOrder = 'desc'
+        } = req.query;
+
+        // Build filter object for unassigned alerts
+        const where = {
+            assignedTo: null  // Only unassigned alerts
+        };
+
+        // Apply additional filters
+        if (type) {
+            if (type === 'bill') {
+                where.type = { in: ['bill', 'rent', 'payable', 'receivable'] };
+            } else if (type === 'maintenance') {
+                where.type = 'maintenance';
+            } else {
+                where.type = type;
+            }
+        }
+
+        if (status) {
+            if (status === 'open') {
+                where.status = { in: ['pending', 'in_progress'] };
+            } else if (status === 'closed') {
+                where.status = { in: ['resolved', 'dismissed'] };
+            } else {
+                where.status = status;
+            }
+        }
+
+        if (priority) where.priority = priority;
+        if (hostelId) where.hostelId = parseInt(hostelId);
+
+        // Pagination
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const take = parseInt(limit);
+
+        // Get total count
+        const total = await prisma.alert.count({ where });
+
+        // Get unassigned alerts with relations
+        const alerts = await prisma.alert.findMany({
+            where,
+            skip,
+            take,
+            orderBy: {
+                [sortBy]: sortOrder
+            },
+            include: {
+                hostel: { select: { id: true, name: true } },
+                room: { select: { id: true, roomNumber: true } },
+                tenant: { select: { id: true, name: true, phone: true, email: true } },
+                creator: { select: { id: true, username: true } }
+            }
+        });
+
+        // Format alerts for frontend
+        const formattedAlerts = alerts.map(alert => ({
+            id: alert.id,
+            severity: getSeverity(alert.priority || 'medium'),
+            title: alert.title,
+            description: alert.description || '',
+            assignedTo: 'Unassigned',
+            created: formatDate(alert.createdAt),
+            status: getStatusDisplay(alert.status || 'pending'),
+            rawStatus: alert.status || 'pending',
+            priority: alert.priority || 'medium',
+            type: alert.type,
+            maintenanceType: alert.maintenanceType || null,
+            hostel: alert.hostel?.name || null,
+            room: alert.room?.roomNumber || null,
+            tenant: alert.tenant?.name || null,
+            amount: alert.amount || null,
+            dueDate: alert.dueDate ? formatDate(alert.dueDate) : null,
+            createdAt: alert.createdAt.toISOString(),
+            updatedAt: alert.updatedAt.toISOString(),
+            creator: alert.creator ? {
+                id: alert.creator.id,
+                name: getUserDisplayName(alert.creator),
+                username: alert.creator.username
+            } : null
+        }));
+
+        return successResponse(res, {
+            alerts: formattedAlerts,
+            pagination: {
+                total,
+                page: parseInt(page),
+                limit: parseInt(limit),
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        }, 'Unassigned alerts fetched successfully', 200);
+
+    } catch (error) {
+        console.error('Get Unassigned Alerts Error:', error);
+        return errorResponse(res, 'Failed to fetch unassigned alerts', 500);
+    }
+};
+
 module.exports = {
     createAlert,
     getAllAlerts,
@@ -1092,5 +1205,6 @@ module.exports = {
     assignAlert,
     deleteAlert,
     getAlertStats,
-    getOverdueAlerts
+    getOverdueAlerts,
+    getUnassignedAlerts
 };

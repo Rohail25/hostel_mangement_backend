@@ -163,6 +163,30 @@ const getServiceManagement = async (req, res) => {
 const assignVendorToService = async (req, res) => {
   try {
     const { serviceId, vendorId, hostelId, notes } = req.body;
+    
+    // Handle file upload if present
+    let attachmentData = null;
+    if (req.file) {
+      // File uploaded via multer
+      attachmentData = [{
+        name: req.file.originalname,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        url: req.file.path || `/uploads/${req.file.filename}`,
+        uploadedAt: new Date().toISOString(),
+      }];
+    } else if (req.body.attachment) {
+      // Handle if attachment is sent as JSON string
+      try {
+        attachmentData = typeof req.body.attachment === 'string' 
+          ? JSON.parse(req.body.attachment) 
+          : req.body.attachment;
+      } catch (e) {
+        attachmentData = null;
+      }
+    }
 
     if (!serviceId || !vendorId) {
       return errorResponse(res, 'Service ID and Vendor ID are required', 400);
@@ -219,11 +243,34 @@ const assignVendorToService = async (req, res) => {
     if (existingAssignment) {
       // If exists but inactive, reactivate it
       if (!existingAssignment.isActive) {
+        // Handle file upload if present
+        let attachmentData = existingAssignment.attachment;
+        if (req.file) {
+          attachmentData = [{
+            name: req.file.originalname,
+            filename: req.file.filename,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            url: req.file.path || `/uploads/${req.file.filename}`,
+            uploadedAt: new Date().toISOString(),
+          }];
+        } else if (req.body.attachment) {
+          try {
+            attachmentData = typeof req.body.attachment === 'string' 
+              ? JSON.parse(req.body.attachment) 
+              : req.body.attachment;
+          } catch (e) {
+            attachmentData = existingAssignment.attachment;
+          }
+        }
+        
         const updated = await prisma.vendorServiceAssignment.update({
           where: { id: existingAssignment.id },
           data: {
             isActive: true,
             notes: notes || existingAssignment.notes,
+            attachment: attachmentData,
             updatedAt: new Date(),
           },
           include: {
@@ -275,6 +322,7 @@ const assignVendorToService = async (req, res) => {
         vendorId: parsedVendorId,
         hostelId: parsedHostelId,
         notes: notes || null,
+        attachment: attachmentData,
         isActive: true,
       },
       include: {
@@ -395,10 +443,18 @@ const getAllServices = async (req, res) => {
         price: true,
         priceUnit: true,
         isActive: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
 
-    return successResponse(res, services, 'Services retrieved successfully', 200);
+    // Map services to include 'unit' as alias for 'priceUnit' for frontend compatibility
+    const mappedServices = services.map(service => ({
+      ...service,
+      unit: service.priceUnit, // Add unit alias
+    }));
+
+    return successResponse(res, mappedServices, 'Services retrieved successfully', 200);
   } catch (error) {
     console.error('Get All Services Error:', error);
     return errorResponse(res, error.message || 'Failed to fetch services', 500);
@@ -463,11 +519,150 @@ const getAvailableVendors = async (req, res) => {
   }
 };
 
+/**
+ * Create Service
+ * POST /api/admin/vendor/management/services
+ */
+const createService = async (req, res) => {
+  try {
+    const { name, description, category, price, unit } = req.body;
+    const userId = req.user?.id;
+
+    if (!name || !name.trim()) {
+      return errorResponse(res, 'Service name is required', 400);
+    }
+
+    // Check if service with same name already exists
+    const existingService = await prisma.service.findUnique({
+      where: { name: name.trim() },
+    });
+
+    if (existingService) {
+      return errorResponse(res, 'Service with this name already exists', 400);
+    }
+
+    const service = await prisma.service.create({
+      data: {
+        name: name.trim(),
+        description: description?.trim() || null,
+        category: category?.trim() || null,
+        price: parseNullableFloat(price),
+        priceUnit: unit?.trim() || null,
+        isActive: true,
+      },
+    });
+
+    return successResponse(res, service, 'Service created successfully', 201);
+  } catch (error) {
+    console.error('Create Service Error:', error);
+    return errorResponse(res, error.message || 'Failed to create service', 500);
+  }
+};
+
+/**
+ * Update Service
+ * PUT /api/admin/vendor/management/services/:id
+ */
+const updateService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, category, price, unit, isActive } = req.body;
+
+    const serviceId = parseInt(id, 10);
+    if (isNaN(serviceId)) {
+      return errorResponse(res, 'Invalid service ID', 400);
+    }
+
+    // Check if service exists
+    const existingService = await prisma.service.findUnique({
+      where: { id: serviceId },
+    });
+
+    if (!existingService) {
+      return errorResponse(res, 'Service not found', 404);
+    }
+
+    // If name is being changed, check if new name already exists
+    if (name && name.trim() !== existingService.name) {
+      const nameExists = await prisma.service.findUnique({
+        where: { name: name.trim() },
+      });
+      if (nameExists) {
+        return errorResponse(res, 'Service with this name already exists', 400);
+      }
+    }
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name.trim();
+    if (description !== undefined) updateData.description = description?.trim() || null;
+    if (category !== undefined) updateData.category = category?.trim() || null;
+    if (price !== undefined) updateData.price = parseNullableFloat(price);
+    if (unit !== undefined) updateData.priceUnit = unit?.trim() || null;
+    if (isActive !== undefined) updateData.isActive = isActive === true || isActive === 'true';
+
+    const service = await prisma.service.update({
+      where: { id: serviceId },
+      data: updateData,
+    });
+
+    return successResponse(res, service, 'Service updated successfully', 200);
+  } catch (error) {
+    console.error('Update Service Error:', error);
+    return errorResponse(res, error.message || 'Failed to update service', 500);
+  }
+};
+
+/**
+ * Delete Service
+ * DELETE /api/admin/vendor/management/services/:id
+ */
+const deleteService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const serviceId = parseInt(id, 10);
+
+    if (isNaN(serviceId)) {
+      return errorResponse(res, 'Invalid service ID', 400);
+    }
+
+    // Check if service exists
+    const existingService = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: {
+        vendorAssignments: {
+          take: 1,
+        },
+      },
+    });
+
+    if (!existingService) {
+      return errorResponse(res, 'Service not found', 404);
+    }
+
+    // Check if service has active assignments
+    if (existingService.vendorAssignments.length > 0) {
+      return errorResponse(res, 'Cannot delete service with active vendor assignments. Please remove assignments first.', 400);
+    }
+
+    await prisma.service.delete({
+      where: { id: serviceId },
+    });
+
+    return successResponse(res, null, 'Service deleted successfully', 200);
+  } catch (error) {
+    console.error('Delete Service Error:', error);
+    return errorResponse(res, error.message || 'Failed to delete service', 500);
+  }
+};
+
 module.exports = {
   getServiceManagement,
   assignVendorToService,
   removeVendorAssignment,
   getAllServices,
   getAvailableVendors,
+  createService,
+  updateService,
+  deleteService,
 };
 

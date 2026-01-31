@@ -168,7 +168,7 @@ const getRoleById = async (req, res) => {
 // ===================================
 const createRole = async (req, res) => {
     try {
-        const { rolename, description, permissions, userId } = req.body;
+        const { rolename, description, permissions, hostelId } = req.body;
 
         // Validation
         if (!rolename || !rolename.trim()) {
@@ -185,33 +185,47 @@ const createRole = async (req, res) => {
             return errorResponse(res, "User not found", 404);
         }
 
-        // Determine userId for the role
-        let roleUserId = null;
-        if (currentUser.isAdmin) {
-            // Admin can create global roles (userId = null) or user-specific roles
-            roleUserId = userId !== undefined ? (userId === null ? null : parseInt(userId)) : null;
-        } else {
-            // Non-admin users can only create roles for themselves
-            roleUserId = req.userId;
+        // IMPORTANT: userId is ALWAYS taken from authenticated user (req.userId)
+        // It represents who created/owns the role, not from form input
+        const roleUserId = req.userId;
+
+        // Validate hostelId if provided
+        let parsedHostelId = null;
+        if (hostelId) {
+            parsedHostelId = parseInt(hostelId);
+            if (isNaN(parsedHostelId)) {
+                return errorResponse(res, "Invalid hostel ID format", 400);
+            }
+            
+            // Verify hostel exists
+            const hostelExists = await prisma.hostel.findUnique({
+                where: { id: parsedHostelId }
+            });
+            
+            if (!hostelExists) {
+                return errorResponse(res, "Hostel not found", 404);
+            }
         }
 
-        // Check if role with same name already exists for this user (or globally)
+        // Check if role with same name already exists for this user and hostel combination
         const existingRole = await prisma.role.findFirst({
             where: {
                 roleName: rolename.trim(),
-                userId: roleUserId
+                userId: roleUserId,
+                hostelId: parsedHostelId
             }
         });
 
         if (existingRole) {
-            return errorResponse(res, "Role with this name already exists", 400);
+            return errorResponse(res, "Role with this name already exists for this user and hostel", 400);
         }
 
         // Create role with permissions if provided
         const roleData = {
             roleName: rolename.trim(),
             description: description?.trim() || null,
-            userId: roleUserId
+            userId: roleUserId,
+            hostelId: parsedHostelId
         };
 
         let role;
@@ -246,17 +260,39 @@ const createRole = async (req, res) => {
                             include: {
                                 permission: true
                             }
+                        },
+                        hostel: {
+                            select: {
+                                id: true,
+                                name: true
+                            }
                         }
                     }
                 });
             } else {
                 role = await prisma.role.create({
-                    data: roleData
+                    data: roleData,
+                    include: {
+                        hostel: {
+                            select: {
+                                id: true,
+                                name: true
+                            }
+                        }
+                    }
                 });
             }
         } else {
             role = await prisma.role.create({
-                data: roleData
+                data: roleData,
+                include: {
+                    hostel: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
+                    }
+                }
             });
         }
 
@@ -278,7 +314,7 @@ const createRole = async (req, res) => {
 const updateRole = async (req, res) => {
     try {
         const { id } = req.params;
-        const { rolename, description, permissions, userId } = req.body;
+        const { rolename, description, permissions, hostelId } = req.body;
         const roleId = parseInt(id);
 
         if (isNaN(roleId)) {
@@ -309,13 +345,30 @@ const updateRole = async (req, res) => {
             return errorResponse(res, "Access denied. You don't have permission to update this role.", 403);
         }
 
-        // Determine userId for the role
-        let roleUserId = existingRole.userId;
-        if (currentUser.isAdmin && userId !== undefined) {
-            roleUserId = userId === null ? null : parseInt(userId);
-        } else if (!currentUser.isAdmin) {
-            // Non-admin can only update their own roles, keep existing userId
-            roleUserId = existingRole.userId || req.userId;
+        // IMPORTANT: userId is ALWAYS taken from authenticated user (req.userId)
+        // It should NOT be modified from form input
+        const roleUserId = existingRole.userId || req.userId;
+
+        // Validate and parse hostelId if provided
+        let parsedHostelId = existingRole.hostelId; // Keep existing if not changing
+        if (hostelId !== undefined) {
+            if (hostelId === null) {
+                parsedHostelId = null; // Allow removing hostel assignment
+            } else {
+                parsedHostelId = parseInt(hostelId);
+                if (isNaN(parsedHostelId)) {
+                    return errorResponse(res, "Invalid hostel ID format", 400);
+                }
+                
+                // Verify hostel exists
+                const hostelExists = await prisma.hostel.findUnique({
+                    where: { id: parsedHostelId }
+                });
+                
+                if (!hostelExists) {
+                    return errorResponse(res, "Hostel not found", 404);
+                }
+            }
         }
 
         // Check if name is being changed and if it conflicts
@@ -323,12 +376,13 @@ const updateRole = async (req, res) => {
             const nameConflict = await prisma.role.findFirst({
                 where: {
                     roleName: rolename.trim(),
-                    userId: roleUserId
+                    userId: roleUserId,
+                    hostelId: parsedHostelId
                 }
             });
 
             if (nameConflict && nameConflict.id !== roleId) {
-                return errorResponse(res, "Role with this name already exists", 400);
+                return errorResponse(res, "Role with this name already exists for this user and hostel", 400);
             }
         }
 
@@ -336,9 +390,7 @@ const updateRole = async (req, res) => {
         const updateData = {};
         if (rolename) updateData.roleName = rolename.trim();
         if (description !== undefined) updateData.description = description?.trim() || null;
-        if (currentUser.isAdmin && userId !== undefined) {
-            updateData.userId = roleUserId;
-        }
+        if (hostelId !== undefined) updateData.hostelId = parsedHostelId;
 
         // Update role
         let role = await prisma.role.update({
@@ -348,6 +400,12 @@ const updateRole = async (req, res) => {
                 permissions: {
                     include: {
                         permission: true
+                    }
+                },
+                hostel: {
+                    select: {
+                        id: true,
+                        name: true
                     }
                 }
             }
@@ -394,6 +452,12 @@ const updateRole = async (req, res) => {
                         permissions: {
                             include: {
                                 permission: true
+                            }
+                        },
+                        hostel: {
+                            select: {
+                                id: true,
+                                name: true
                             }
                         }
                     }

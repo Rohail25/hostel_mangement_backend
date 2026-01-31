@@ -157,13 +157,22 @@ const generateFPASummary = async (req, res) => {
         : prisma.bed.count(),
     ]);
 
-    // Revenue per Available Unit (RevPAU)
+    // Revenue per Available Unit (RevPAU) - For backward compatibility
     // Annual: (monthly income * 12) / totalBeds
     // Monthly: monthly income / totalBeds
     const annualRevPAU = totalBeds > 0 
       ? formatAmount((totalIncome * 12) / totalBeds)
       : 0;
     const monthlyRevPAU = totalBeds > 0 
+      ? formatAmount(totalIncome / totalBeds)
+      : 0;
+
+    // ===== New Metrics =====
+    // Monthly Bills: Total revenue for the month (bills/income collected)
+    const monthlyBills = formatAmount(totalIncome);
+
+    // Monthly Rent: Average rent per tenant/bed for the month
+    const monthlyRent = totalBeds > 0 
       ? formatAmount(totalIncome / totalBeds)
       : 0;
 
@@ -191,6 +200,9 @@ const generateFPASummary = async (req, res) => {
     const collectionEfficiency = totalRentDue > 0
       ? formatAmount((collectedRent / totalRentDue) * 100)
       : 0;
+
+    // Total Payable: Total rent due for the month (all rent payments expected)
+    const totalPayable = formatAmount(totalRentDue);
 
     // ===== 6️⃣ Cash Flow =====
     const monthlyCashFlow = netIncome;
@@ -298,6 +310,10 @@ const generateFPASummary = async (req, res) => {
         annualRevPAU: annualRevPAU,
         monthlyRevPAU: monthlyRevPAU,
         contributionMarginRatio: contributionMarginRatio,
+        // New Metrics
+        monthlyBills: monthlyBills,
+        monthlyRent: monthlyRent,
+        totalPayable: totalPayable,
       },
       // Summary Data
       summary: {

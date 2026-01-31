@@ -54,10 +54,26 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const allowed = [
       'image/jpeg', 'image/png', 'image/jpg', 'image/webp',
-      'application/pdf', 'image/heic'
+      'application/pdf', 'image/heic', 'application/msword', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF'));
+    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF, DOC, DOCX'));
+  }
+});
+
+// More flexible upload that accepts any file fields
+const uploadAny = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      'image/jpeg', 'image/png', 'image/jpg', 'image/webp',
+      'application/pdf', 'image/heic', 'application/msword', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF, DOC, DOCX'));
   }
 });
 
@@ -66,14 +82,12 @@ const upload = multer({
 // ===============================
 
 // Create new tenant (allow profilePhoto + multiple documents)
+// Using uploadAny to accept any file fields dynamically
 router.post(
   '/tenant',
   authenticate,
   authorize('admin', 'manager', 'owner'),
-  upload.fields([
-    { name: 'profilePhoto', maxCount: 1 },
-    { name: 'documents', maxCount: 10 }
-  ]),
+  uploadAny.any(),
   createTenant
 );
 
@@ -108,14 +122,12 @@ router.get('/tenant/:id/details', authenticate, authorize('admin', 'manager', 'o
 router.get('/tenant/:id', authenticate, authorize('admin', 'manager', 'owner'), getTenantById);
 
 // Update tenant (profile + documents)
+// Using uploadAny to accept any file fields dynamically
 router.put(
   '/tenant/:id',
   authenticate,
   authorize('admin', 'manager', 'owner'),
-  upload.fields([
-    { name: 'profilePhoto', maxCount: 1 },
-    { name: 'documents', maxCount: 10 }
-  ]),
+  uploadAny.any(),
   updateTenant
 );
 

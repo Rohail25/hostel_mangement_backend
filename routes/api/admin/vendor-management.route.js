@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { authenticate, authorize } = require('../../../middleware/auth.middleware');
 const {
   getServiceManagement,
@@ -7,7 +10,39 @@ const {
   removeVendorAssignment,
   getAllServices,
   getAvailableVendors,
+  createService,
+  updateService,
+  deleteService,
 } = require('../../../controllers/api/vendor-management.controller');
+
+// Configure multer for file uploads
+const uploadDir = path.join(__dirname, '../../../uploads/vendor-assignments');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'attachment-' + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    // Only allow images
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  },
+});
 
 // All routes require authentication and admin/manager role
 router.use(authenticate, authorize('admin', 'manager'));
@@ -48,7 +83,7 @@ router.get('/vendor/management', getServiceManagement);
  * 
  * Returns: Created assignment with service, vendor, and hostel details
  */
-router.post('/vendor/management/assign', assignVendorToService);
+router.post('/vendor/management/assign', upload.single('attachment'), assignVendorToService);
 
 /**
  * Remove Vendor Assignment
@@ -73,6 +108,49 @@ router.delete('/vendor/management/assign/:id', removeVendorAssignment);
  * Returns: List of all available services
  */
 router.get('/vendor/management/services', getAllServices);
+
+/**
+ * Create Service
+ * POST /api/admin/vendor/management/services
+ * 
+ * Body:
+ * {
+ *   "name": "Service Name",      // Required
+ *   "description": "...",         // Optional
+ *   "category": "...",            // Optional
+ *   "price": 100.00,              // Optional
+ *   "unit": "per hour"            // Optional
+ * }
+ * 
+ * Returns: Created service
+ */
+router.post('/vendor/management/services', createService);
+
+/**
+ * Update Service
+ * PUT /api/admin/vendor/management/services/:id
+ * 
+ * Body:
+ * {
+ *   "name": "Service Name",      // Optional
+ *   "description": "...",         // Optional
+ *   "category": "...",            // Optional
+ *   "price": 100.00,              // Optional
+ *   "unit": "per hour",           // Optional
+ *   "isActive": true              // Optional
+ * }
+ * 
+ * Returns: Updated service
+ */
+router.put('/vendor/management/services/:id', updateService);
+
+/**
+ * Delete Service
+ * DELETE /api/admin/vendor/management/services/:id
+ * 
+ * Returns: Success message
+ */
+router.delete('/vendor/management/services/:id', deleteService);
 
 /**
  * Get Available Vendors

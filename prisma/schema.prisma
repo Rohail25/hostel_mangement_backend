@@ -244,6 +244,8 @@ model User {
   whatsappCampaigns WhatsAppCampaign[]
   ActivityLog       ActivityLog[]
   ScoreCard         ScoreCard[]
+  vendorCategories  VendorCategory[] @relation("VendorCategoryUser")
+  currency          Currency?        @relation() // User's preferred currency
 
   @@index([email])
   @@index([userRoleId])
@@ -286,6 +288,8 @@ model Hostel {
   fpas                  FPA[]
   employees             Employee[]                @relation("EmployeeHostel")
   vendorServiceAssignments VendorServiceAssignment[]
+  roles        Role[]        @relation("RoleAuthority")
+  messEntries  MessEntry[]
 
   @@index([name])
   @@index([status])
@@ -429,37 +433,72 @@ model Allocation {
   @@index([allocatedById])
 }
 
+model MessEntry {
+  id        Int      @id @default(autoincrement())
+  hostelId  Int
+  day       String   @db.VarChar(50) // Monday, Tuesday, Wednesday, etc.
+  breakfast Json? // { items: [{ name, quantity, unit }], notes? }
+  lunch     Json? // { items: [{ name, quantity, unit }], notes? }
+  dinner    Json? // { items: [{ name, quantity, unit }], notes? }
+  price     Float?   @default(0) @db.Double // Price for the day's meals
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+
+  @@unique([hostelId, day])
+  @@index([hostelId])
+  @@index([day])
+}
+
 model Tenant {
   id               Int       @id @default(autoincrement())
   userId           Int?      @unique // Optional: Link to User account if registered online (one user = one tenant profile)
   name             String    @db.VarChar(255)
-  firstName        String?   @db.VarChar(255)
-  lastName         String?   @db.VarChar(255)
+  fullName         String?   @db.VarChar(255) // Full name field
+  fatherName       String?   @db.VarChar(255) // Father name field
   email            String?   @unique @db.VarChar(255)
   phone            String    @db.VarChar(50)
   alternatePhone   String?   @db.VarChar(50)
+  whatsappNumber   String?   @db.VarChar(50) // New: WhatsApp number
   gender           Gender?
+  genderOther      String?   @db.VarChar(255) // New: Gender other text
   dateOfBirth      DateTime?
   cnicNumber       String?   @unique @db.VarChar(20)
   address          Json? // { street, city, state, country, pincode }
   permanentAddress Json? // { street, city, state, country, pincode }
   
+  // Personal Attachments (multiple images)
+  attachments      Json? // Array of { field, url, filename, originalName, mimetype, size, uploadedAt }
+  
   // Emergency Contact
-  emergencyContact Json? // { name, relationship, phone, address }
+  emergencyContact Json? // { name, relationship, phone, address, whatsappNumber, relationOther }
+  emergencyContactWhatsapp String? @db.VarChar(50) // New: Emergency contact WhatsApp
+  emergencyContactRelationOther String? @db.VarChar(255) // New: Emergency relation other text
+  anyDisease       String?   @db.VarChar(255) // New: Any disease field
+  bloodGroup       String?   @db.VarChar(10) // New: Blood group
+  nearestRelative  Json? // New: { contactNumber, whatsappNumber, relation, relationOther }
   
   // Professional/Educational Info
-  occupation    String? @db.VarChar(255)
-  companyName   String? @db.VarChar(255)
-  designation   String? @db.VarChar(255)
-  monthlyIncome Float?  @db.Double
+  professionType   String?   @db.VarChar(50) // student, job, business
+  professionDetail Json? // JSON field to store all profession details with keys (student/job/business specific fields)
+  professionDescription String? @db.Text // Description textarea
   
   // Lease and Rent
   leaseStartDate DateTime?
   leaseEndDate   DateTime?
   monthlyRent    Float? @db.Double
   
+  // Hostel Info
+  lateFeesFine      String?   @db.VarChar(10) // New: Yes/No
+  lateFeesPercentage Float?  @db.Double // New: Percentage if late fees fine is Yes
+  securityDepositFile Json? // New: Security deposit file upload
+  advancedRentReceivedFile Json? // New: Advanced rent received file upload
+  rentalDocument   Json? // New: Rental document (renamed from documents for hostel section)
+  
   // Identification Documents
-  documents    Json? // Array of { type, number, url, uploadedAt }
+  documents    Json? // Array of { type, number, url, uploadedAt } - Keep for backward compatibility
   profilePhoto String? @db.VarChar(500)
   
   // Status and Financial
@@ -556,6 +595,10 @@ model Employee {
   department   String?      @db.VarChar(100)
   designation  String?      @db.VarChar(100)
   
+  // Personal Information
+  fatherName     String? @db.VarChar(255) // New: Father name
+  whatsappNumber String? @db.VarChar(50)  // New: WhatsApp number
+  
   // Salary Information
   salary     Float   @db.Double
   salaryType String? @default("monthly") @db.VarChar(20) // monthly, hourly, daily
@@ -576,11 +619,41 @@ model Employee {
   address Json? // { street, city, state, country, pincode }
   
   // Documents
-  documents    Json? // Array of { type, number, url, uploadedAt }
+  documents    Json? // Array of { type, number, url, uploadedAt } - Keep for backward compatibility
+  cnicDocuments Json? // New: CNIC documents (max 2 images)
+  agreementDocument Json? // New: Agreement document (1 image)
+  policeCharacterCertificate Json? // New: Police character certificate (1 image)
+  anyOtherDocuments Json? // New: Any other documents (multiple files)
   profilePhoto String? @db.VarChar(500)
   
+  // Professional/Educational Info (same as tenant)
+  professionType   String?   @db.VarChar(50) // student, job, business
+  academicName     String?   @db.VarChar(255)
+  academicAddress  String?   @db.VarChar(500)
+  academicLocation String?   @db.VarChar(500)
+  studentCardNo    String?   @db.VarChar(100)
+  academicAttachments Json?
+  jobTitle         String?   @db.VarChar(255)
+  companyName      String?   @db.VarChar(255)
+  jobAddress       String?   @db.VarChar(500)
+  jobLocation      String?   @db.VarChar(500)
+  jobIdNo          String?   @db.VarChar(100)
+  jobAttachments   Json?
+  businessName     String?   @db.VarChar(255)
+  businessAddress  String?   @db.VarChar(500)
+  businessLocation String?   @db.VarChar(500)
+  businessAttachments Json?
+  professionDescription String? @db.Text
+  
+  // Emergency Contact (enhanced)
+  emergencyContact Json? // { name, relationship, phone, address, whatsappNumber, relationOther }
+  emergencyContactWhatsapp String? @db.VarChar(50)
+  emergencyContactRelationOther String? @db.VarChar(255)
+  anyDisease       String?   @db.VarChar(255)
+  bloodGroup       String?   @db.VarChar(10)
+  nearestRelative  Json? // { contactNumber, whatsappNumber, relation, relationOther }
+  
   // Additional Info
-  emergencyContact Json? // { name, relationship, phone, address }
   qualifications   Json? // Array of { degree, institution, year }
   notes            String? @db.Text
   
@@ -754,8 +827,10 @@ model Booking {
 
 enum VendorStatus {
   active
-  inactiveleas
+  inactive
   blacklisted
+  pending
+  suspended
 }
 
 enum PaymentTerms {
@@ -774,6 +849,7 @@ model Vendor {
   // Basic Info
   name           String  @db.VarChar(255)
   companyName    String? @db.VarChar(255)
+  address        String? @db.VarChar(500) // Address field below company name
   email          String? @unique @db.VarChar(255)
   phone          String? @db.VarChar(50)
   alternatePhone String? @db.VarChar(50)
@@ -781,7 +857,8 @@ model Vendor {
   category       String? @db.VarChar(100) // e.g., utilities, maintenance, supplies
   services       Json? // ["plumbing", "cleaning", ...]
   contactPerson  Json? // { name, phone, email, designation }
-  address        Json? // { street, city, state, country, zip }
+  location       String? @db.VarChar(500) // Google Map link
+  attachments    Json? // Array of { name, url, uploadedAt }
 
   // Financials
   paymentTerms PaymentTerms? @default(net30)
@@ -791,7 +868,6 @@ model Vendor {
   balance      Float?        @default(0) @db.Double // Derived: totalPayable - totalPaid
 
   // Meta
-  documents Json? // [{ name, url }]
   notes     String?       @db.Text
   status    VendorStatus? @default(active)
   createdAt DateTime      @default(now())
@@ -1011,20 +1087,23 @@ model ScoreCard {
 
 model Role {
   id          Int      @id @default(autoincrement())
-  roleName        String   @db.VarChar(100)
+  roleName    String   @db.VarChar(100)
   description String?  @db.Text
-  userId      Int?     // If null, role is global. If set, role is user-specific
+  userId      Int?     // User who created/owns this role. Taken from authenticated user (auth)
+  hostelId    Int?     // Authority Hostel - if set, role is hostel-specific
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relations
   users       User[]           @relation("UserRole")
   createdBy   User?            @relation("RoleCreator", fields: [userId], references: [id], onDelete: Cascade)
+  hostel      Hostel?          @relation("RoleAuthority", fields: [hostelId], references: [id], onDelete: SetNull)
   permissions RolePermission[]
 
-  @@unique([roleName, userId]) // Role name must be unique per user (or globally if userId is null)
+  @@unique([roleName, userId, hostelId]) // Role name must be unique per user per hostel
   @@index([roleName])
   @@index([userId])
+  @@index([hostelId])
 }
 
 model Permission {
@@ -1058,6 +1137,24 @@ model RolePermission {
   @@index([permissionId])
 }
 
+// =================== VENDOR CATEGORY ===================
+
+model VendorCategory {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(255)
+  description String?  @db.Text
+  userId      Int?     // User ID - users see only their own categories
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user User? @relation("VendorCategoryUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([name, userId]) // Category name must be unique per user
+  @@index([userId])
+  @@index([name])
+}
+
 // =================== VENDOR SERVICE MANAGEMENT ===================
 
 model Service {
@@ -1087,6 +1184,7 @@ model VendorServiceAssignment {
 
   // Additional info
   notes     String?  @db.Text
+  attachment Json?   // Array of { name, url, filename, originalName, mimetype, size, uploadedAt }
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1101,4 +1199,21 @@ model VendorServiceAssignment {
   @@index([vendorId])
   @@index([hostelId])
   @@index([isActive])
+}
+
+// =================== CURRENCY MODEL ===================
+
+model Currency {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique // One currency per user
+  symbol    String   @db.VarChar(10) // e.g., $, €, ₹, £
+  code      String?  @db.VarChar(3)  // e.g., USD, EUR, INR, GBP
+  name      String?  @db.VarChar(50) // e.g., US Dollar, Euro, Indian Rupee
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

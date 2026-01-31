@@ -50,10 +50,26 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const allowed = [
       'image/jpeg', 'image/png', 'image/jpg', 'image/webp',
-      'application/pdf', 'image/heic'
+      'application/pdf', 'image/heic', 'application/msword', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF'));
+    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF, DOC, DOCX'));
+  }
+});
+
+// More flexible upload that accepts any file fields
+const uploadAny = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      'image/jpeg', 'image/png', 'image/jpg', 'image/webp',
+      'application/pdf', 'image/heic', 'application/msword', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type. Allowed: JPG, PNG, WEBP, PDF, DOC, DOCX'));
   }
 });
 
@@ -62,14 +78,12 @@ const upload = multer({
 // ===============================
 
 // Create new employee (allow profilePhoto + multiple documents)
+// Using uploadAny to accept any file fields dynamically
 router.post(
   '/employee',
   authenticate,
   authorize('admin'),
-  upload.fields([
-    { name: 'profilePhoto', maxCount: 1 },
-    { name: 'documents', maxCount: 10 }
-  ]),
+  uploadAny.any(),
   createEmployee
 );
 
@@ -89,14 +103,12 @@ router.get('/employees/hostel/:hostelId', authenticate, authorize('admin', 'mana
 router.get('/employee/:id', authenticate, authorize('admin', 'manager'), getEmployeeById);
 
 // Update employee (profile + documents)
+// Using uploadAny to accept any file fields dynamically
 router.put(
   '/employee/:id',
   authenticate,
   authorize('admin', 'manager'),
-  upload.fields([
-    { name: 'profilePhoto', maxCount: 1 },
-    { name: 'documents', maxCount: 10 }
-  ]),
+  uploadAny.any(),
   updateEmployee
 );
 

@@ -9,7 +9,8 @@ const {
     assignAlert,
     deleteAlert,
     getAlertStats,
-    getOverdueAlerts
+    getOverdueAlerts,
+    getUnassignedAlerts
 } = require('../../../controllers/api/alert.controller');
 // const { authenticate, authorize } = require('../../../middleware/auth.middleware');
 
@@ -46,6 +47,20 @@ router.get('/alerts/stats', getAlertStats);
  * @returns { alerts: [], pagination: { total, page, limit, totalPages } }
  */
 router.get('/alerts/overdue', getOverdueAlerts);
+
+/**
+ * @route   GET /api/admin/alerts/unassigned
+ * @desc    Get all unassigned alerts (assignedTo is null)
+ * @access  Admin, Manager
+ * @query   hostelId? - Filter by hostel ID
+ * @query   type? - Filter by type (bill|maintenance|rent|payable|receivable)
+ * @query   status? - Filter by status (open|closed|pending|in_progress|resolved|dismissed)
+ * @query   priority? - Filter by priority (urgent|high|medium|low)
+ * @query   page? - Page number (default: 1)
+ * @query   limit? - Items per page (default: 20)
+ * @returns { alerts: [], pagination: { total, page, limit, totalPages } }
+ */
+router.get('/alerts/unassigned', getUnassignedAlerts);
 
 // ==================== ALERT CRUD OPERATIONS ====================
 

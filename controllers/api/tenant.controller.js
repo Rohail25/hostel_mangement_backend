@@ -134,6 +134,13 @@ const DOCUMENT_UPLOAD_FIELDS = [
   'personalDocuments',
   'leaseDocuments',
   'allocationDocuments',
+  'attachments',
+  'academicAttachments',
+  'jobAttachments',
+  'businessAttachments',
+  'rentalDocument',
+  'securityDepositFile',
+  'advancedRentReceivedFile',
 ];
 
 const collectUploadedDocuments = (files = {}) => {
@@ -455,36 +462,175 @@ const createTenant = async (req, res) => {
   try {
     const {
       userId,
-      firstName,
-      lastName,
+      fullName,
+      fatherName,
       email,
       phone,
       alternatePhone,
+      whatsappNumber,
       gender,
+      genderOther,
       dateOfBirth,
       cnicNumber,
       address,
       permanentAddress,
       emergencyContact,
-      occupation,
+      emergencyContactWhatsapp,
+      emergencyContactRelationOther,
+      anyDisease,
+      bloodGroup,
+      nearestRelative,
+      professionType,
+      professionDescription,
+      // Profession detail fields (will be combined into professionDetail JSON)
+      // Student fields
+      academicName,
+      academicAddress,
+      academicLocation,
+      studentCardNo,
+      // Job fields
+      jobTitle,
       companyName,
-      designation,
-      monthlyIncome,
+      jobAddress,
+      jobLocation,
+      jobIdNo,
+      // Business fields
+      businessName,
+      businessAddress,
+      businessLocation,
       notes,
       leaseStartDate,
       leaseEndDate,
       monthlyRent,
       securityDeposit: securityDepositInput,
       deposit,
-      depositAmount
+      depositAmount,
+      lateFeesFine,
+      lateFeesPercentage
     } = req.body;
 
+    // Handle uploaded files - when using uploadAny.any(), files come as an array
+    // Group files by fieldname
+    const filesByField = {};
+    if (req.files && Array.isArray(req.files)) {
+      req.files.forEach(file => {
+        if (!filesByField[file.fieldname]) {
+          filesByField[file.fieldname] = [];
+        }
+        filesByField[file.fieldname].push(file);
+      });
+    } else if (req.files) {
+      // Fallback for when files come as object (upload.fields format)
+      Object.keys(req.files).forEach(fieldname => {
+        filesByField[fieldname] = Array.isArray(req.files[fieldname]) 
+          ? req.files[fieldname] 
+          : [req.files[fieldname]];
+      });
+    }
+
     // Handle uploaded files
-    const profilePhoto = req.files?.profilePhoto?.[0]
-      ? `/uploads/tenants/${req.files.profilePhoto[0].filename}`
+    const profilePhoto = filesByField.profilePhoto?.[0]
+      ? `/uploads/tenants/${filesByField.profilePhoto[0].filename}`
       : null;
 
-    const uploadedDocs = collectUploadedDocuments(req.files);
+    // Handle attachments (multiple images)
+    const attachmentsFiles = filesByField.attachments || [];
+    const attachments = attachmentsFiles.map(file => ({
+      field: 'attachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle academic attachments
+    const academicAttachmentsFiles = filesByField.academicAttachments || [];
+    const academicAttachments = academicAttachmentsFiles.map(file => ({
+      field: 'academicAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle job attachments
+    const jobAttachmentsFiles = filesByField.jobAttachments || [];
+    const jobAttachments = jobAttachmentsFiles.map(file => ({
+      field: 'jobAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle business attachments
+    const businessAttachmentsFiles = filesByField.businessAttachments || [];
+    const businessAttachments = businessAttachmentsFiles.map(file => ({
+      field: 'businessAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle rental document
+    const rentalDocumentFiles = filesByField.rentalDocument || [];
+    const rentalDocument = rentalDocumentFiles.map(file => ({
+      field: 'rentalDocument',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle security deposit file
+    const securityDepositFiles = filesByField.securityDepositFile || [];
+    const securityDepositFile = securityDepositFiles.map(file => ({
+      field: 'securityDepositFile',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Handle advanced rent received file
+    const advancedRentFiles = filesByField.advancedRentReceivedFile || [];
+    const advancedRentReceivedFile = advancedRentFiles.map(file => ({
+      field: 'advancedRentReceivedFile',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    // Group files for collectUploadedDocuments (needs object format)
+    let filesForCollection = {};
+    if (req.files && Array.isArray(req.files)) {
+      req.files.forEach(file => {
+        if (!filesForCollection[file.fieldname]) {
+          filesForCollection[file.fieldname] = [];
+        }
+        filesForCollection[file.fieldname].push(file);
+      });
+    } else if (req.files) {
+      filesForCollection = req.files;
+    }
+
+    const uploadedDocs = collectUploadedDocuments(filesForCollection);
     const tenantDocUploads = uploadedDocs.filter(
       (doc) => !allocationDocumentFields.has(doc.field)
     );
@@ -532,8 +678,13 @@ const createTenant = async (req, res) => {
     }
 
     // Validation
-    if (!firstName || !phone) {
-      return errorResponse(res, "First name and phone number are required", 400);
+    if (!fullName || !phone) {
+      return errorResponse(res, "Full name and phone number are required", 400);
+    }
+
+    // Validate CNIC length
+    if (cnicNumber && cnicNumber.length !== 13) {
+      return errorResponse(res, "CNIC number must be exactly 13 digits", 400);
     }
 
     // Check if email already exists
@@ -558,41 +709,105 @@ const createTenant = async (req, res) => {
       if (existingTenantProfile) return errorResponse(res, "This user already has a tenant profile", 400);
     }
 
-    // Create Tenant
-    let parsedMonthlyIncome = null;
-    if (monthlyIncome !== undefined && monthlyIncome !== null && monthlyIncome !== "") {
-      const converted = parseFloat(monthlyIncome);
-      if (Number.isNaN(converted)) {
-        return errorResponse(res, "Invalid monthly income amount", 400);
+    // Build professionDetail JSON based on professionType
+    let professionDetailData = null;
+    if (professionType) {
+      professionDetailData = {};
+      
+      if (professionType === 'student') {
+        if (academicName) professionDetailData.academicName = academicName;
+        if (academicAddress) professionDetailData.academicAddress = academicAddress;
+        if (academicLocation) professionDetailData.academicLocation = academicLocation;
+        if (studentCardNo) professionDetailData.studentCardNo = studentCardNo;
+        if (academicAttachments.length > 0) professionDetailData.academicAttachments = academicAttachments;
+      } else if (professionType === 'job') {
+        if (jobTitle) professionDetailData.jobTitle = jobTitle;
+        if (companyName) professionDetailData.companyName = companyName;
+        if (jobAddress) professionDetailData.jobAddress = jobAddress;
+        if (jobLocation) professionDetailData.jobLocation = jobLocation;
+        if (jobIdNo) professionDetailData.jobIdNo = jobIdNo;
+        if (jobAttachments.length > 0) professionDetailData.jobAttachments = jobAttachments;
+      } else if (professionType === 'business') {
+        if (businessName) professionDetailData.businessName = businessName;
+        if (businessAddress) professionDetailData.businessAddress = businessAddress;
+        if (businessLocation) professionDetailData.businessLocation = businessLocation;
+        if (businessAttachments.length > 0) professionDetailData.businessAttachments = businessAttachments;
       }
-      parsedMonthlyIncome = converted;
+      
+      // Only set professionDetail if there's data
+      if (Object.keys(professionDetailData).length === 0) {
+        professionDetailData = null;
+      }
+    }
+
+    // Build emergency contact JSON
+    const emergencyContactData = emergencyContact ? parseJsonField(emergencyContact) : {};
+    if (req.body.emergencyContactName || req.body.emergencyContactNumber || req.body.emergencyContactRelation) {
+      emergencyContactData.name = req.body.emergencyContactName || emergencyContactData.name || null;
+      emergencyContactData.phone = req.body.emergencyContactNumber || emergencyContactData.phone || null;
+      emergencyContactData.relationship = req.body.emergencyContactRelation || emergencyContactData.relationship || null;
+      emergencyContactData.whatsappNumber = emergencyContactWhatsapp || emergencyContactData.whatsappNumber || null;
+      emergencyContactData.relationOther = emergencyContactRelationOther || emergencyContactData.relationOther || null;
+    }
+
+    // Build nearest relative JSON
+    let nearestRelativeData = null;
+    if (req.body.nearestRelativeContact || req.body.nearestRelativeWhatsapp || req.body.nearestRelativeRelation) {
+      nearestRelativeData = {
+        contactNumber: req.body.nearestRelativeContact || null,
+        whatsappNumber: req.body.nearestRelativeWhatsapp || null,
+        relation: req.body.nearestRelativeRelation || null,
+        relationOther: req.body.nearestRelativeRelationOther || null,
+      };
+    }
+
+    // Parse late fees percentage
+    let parsedLateFeesPercentage = null;
+    if (lateFeesFine === 'Yes' && lateFeesPercentage) {
+      parsedLateFeesPercentage = parseFloat(lateFeesPercentage);
+      if (Number.isNaN(parsedLateFeesPercentage) || parsedLateFeesPercentage < 0 || parsedLateFeesPercentage > 100) {
+        return errorResponse(res, "Invalid late fees percentage (must be between 0 and 100)", 400);
+      }
     }
 
     const tenantData = {
-      userId: userIdExist,
-      firstName,
-      lastName: lastName || null,
-      name: `${firstName} ${lastName || ""}`.trim(),
+      // Only include userId if it exists, otherwise omit it (Prisma relation requirement)
+      ...(userIdExist && { userId: userIdExist }),
+      fullName: fullName,
+      fatherName: fatherName || null,
+      name: fullName, // Use fullName as primary name
       email: email || null,
       phone,
       alternatePhone: alternatePhone || null,
+      whatsappNumber: whatsappNumber || null,
       gender: gender || null,
+      genderOther: gender === 'other' ? (genderOther || null) : null,
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
       cnicNumber: cnicNumber || null,
       address: parseJsonField(address),
       permanentAddress: parseJsonField(permanentAddress),
-      emergencyContact: parseJsonField(emergencyContact),
-      occupation: occupation || null,
-      companyName: companyName || null,
-      designation: designation || null,
-      monthlyIncome: parsedMonthlyIncome,
+      attachments: attachments.length > 0 ? attachments : null,
+      emergencyContact: Object.keys(emergencyContactData).length > 0 ? emergencyContactData : null,
+      emergencyContactWhatsapp: emergencyContactWhatsapp || null,
+      emergencyContactRelationOther: emergencyContactRelationOther || null,
+      anyDisease: anyDisease || null,
+      bloodGroup: bloodGroup || null,
+      nearestRelative: nearestRelativeData,
+      professionType: professionType || null,
+      professionDetail: professionDetailData,
+      professionDescription: professionDescription || null,
       documents: providedDocuments.length ? providedDocuments : null,
       profilePhoto,
       notes: notes || null,
       leaseStartDate: parsedLeaseStartDate,
       leaseEndDate: parsedLeaseEndDate,
       monthlyRent: parsedMonthlyRent,
-      securityDeposit: parsedSecurityDeposit ?? 0
+      securityDeposit: parsedSecurityDeposit ?? 0,
+      lateFeesFine: lateFeesFine || null,
+      lateFeesPercentage: parsedLateFeesPercentage,
+      rentalDocument: rentalDocument.length > 0 ? rentalDocument : null,
+      securityDepositFile: securityDepositFile.length > 0 ? securityDepositFile : null,
+      advancedRentReceivedFile: advancedRentReceivedFile.length > 0 ? advancedRentReceivedFile : null,
     };
 
     const allocationPayload = extractAllocationPayload(
@@ -705,12 +920,137 @@ const updateTenant = async (req, res) => {
       }
     }
 
+    // Handle uploaded files - when using uploadAny.any(), files come as an array
+    // Group files by fieldname
+    const filesByField = {};
+    if (req.files && Array.isArray(req.files)) {
+      req.files.forEach(file => {
+        if (!filesByField[file.fieldname]) {
+          filesByField[file.fieldname] = [];
+        }
+        filesByField[file.fieldname].push(file);
+      });
+    } else if (req.files) {
+      // Fallback for when files come as object (upload.fields format)
+      Object.keys(req.files).forEach(fieldname => {
+        filesByField[fieldname] = Array.isArray(req.files[fieldname]) 
+          ? req.files[fieldname] 
+          : [req.files[fieldname]];
+      });
+    }
+
     // Handle uploaded files
-    const profilePhoto = req.files?.profilePhoto?.[0]
-      ? `/uploads/tenants/${req.files.profilePhoto[0].filename}`
+    const profilePhoto = filesByField.profilePhoto?.[0]
+      ? `/uploads/tenants/${filesByField.profilePhoto[0].filename}`
       : undefined;
 
-    const documentFiles = req.files?.documents?.map(file => `/uploads/tenants/${file.filename}`) || [];
+    // Handle attachments (multiple images)
+    const attachmentsFiles = filesByField.attachments || [];
+    const newAttachments = attachmentsFiles.map(file => ({
+      field: 'attachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedAttachments = existingTenant.attachments 
+      ? [...parseDocumentsList(existingTenant.attachments), ...newAttachments]
+      : (newAttachments.length > 0 ? newAttachments : null);
+
+    // Handle academic attachments
+    const academicAttachmentsFiles = filesByField.academicAttachments || [];
+    const newAcademicAttachments = academicAttachmentsFiles.map(file => ({
+      field: 'academicAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedAcademicAttachments = existingTenant.academicAttachments
+      ? [...parseDocumentsList(existingTenant.academicAttachments), ...newAcademicAttachments]
+      : (newAcademicAttachments.length > 0 ? newAcademicAttachments : null);
+
+    // Handle job attachments
+    const jobAttachmentsFiles = filesByField.jobAttachments || [];
+    const newJobAttachments = jobAttachmentsFiles.map(file => ({
+      field: 'jobAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedJobAttachments = existingTenant.jobAttachments
+      ? [...parseDocumentsList(existingTenant.jobAttachments), ...newJobAttachments]
+      : (newJobAttachments.length > 0 ? newJobAttachments : null);
+
+    // Handle business attachments
+    const businessAttachmentsFiles = filesByField.businessAttachments || [];
+    const newBusinessAttachments = businessAttachmentsFiles.map(file => ({
+      field: 'businessAttachments',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedBusinessAttachments = existingTenant.businessAttachments
+      ? [...parseDocumentsList(existingTenant.businessAttachments), ...newBusinessAttachments]
+      : (newBusinessAttachments.length > 0 ? newBusinessAttachments : null);
+
+    // Handle rental document
+    const rentalDocumentFiles = filesByField.rentalDocument || [];
+    const newRentalDocument = rentalDocumentFiles.map(file => ({
+      field: 'rentalDocument',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedRentalDocument = existingTenant.rentalDocument
+      ? [...parseDocumentsList(existingTenant.rentalDocument), ...newRentalDocument]
+      : (newRentalDocument.length > 0 ? newRentalDocument : null);
+
+    // Handle security deposit file
+    const securityDepositFiles = filesByField.securityDepositFile || [];
+    const newSecurityDepositFile = securityDepositFiles.map(file => ({
+      field: 'securityDepositFile',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedSecurityDepositFile = existingTenant.securityDepositFile
+      ? [...parseDocumentsList(existingTenant.securityDepositFile), ...newSecurityDepositFile]
+      : (newSecurityDepositFile.length > 0 ? newSecurityDepositFile : null);
+
+    // Handle advanced rent received file
+    const advancedRentFiles = filesByField.advancedRentReceivedFile || [];
+    const newAdvancedRentReceivedFile = advancedRentFiles.map(file => ({
+      field: 'advancedRentReceivedFile',
+      url: `/uploads/tenants/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+    const mergedAdvancedRentReceivedFile = existingTenant.advancedRentReceivedFile
+      ? [...parseDocumentsList(existingTenant.advancedRentReceivedFile), ...newAdvancedRentReceivedFile]
+      : (newAdvancedRentReceivedFile.length > 0 ? newAdvancedRentReceivedFile : null);
+
+    // Handle documents (backward compatibility)
+    const documentFiles = filesByField.documents?.map(file => `/uploads/tenants/${file.filename}`) || [];
     const documents = documentFiles.length ? JSON.stringify(documentFiles) : existingTenant.documents;
 
     // Check email duplication
@@ -725,13 +1065,19 @@ const updateTenant = async (req, res) => {
       if (cnicExists) return errorResponse(res, "CNIC number already registered", 400);
     }
 
-    const updatedFirstName = hasOwn(updates, "firstName")
-      ? (updates.firstName === null || updates.firstName === '' ? null : updates.firstName)
-      : existingTenant.firstName;
+    // Validate CNIC length
+    if (updates.cnicNumber && updates.cnicNumber.length !== 13) {
+      return errorResponse(res, "CNIC number must be exactly 13 digits", 400);
+    }
 
-    const updatedLastName = hasOwn(updates, "lastName")
-      ? (updates.lastName === null || updates.lastName === '' ? null : updates.lastName)
-      : existingTenant.lastName;
+    // Handle fullName and fatherName
+    const updatedFullName = hasOwn(updates, "fullName")
+      ? (updates.fullName === null || updates.fullName === '' ? null : updates.fullName)
+      : existingTenant.fullName;
+
+    const updatedFatherName = hasOwn(updates, "fatherName")
+      ? (updates.fatherName === null || updates.fatherName === '' ? null : updates.fatherName)
+      : existingTenant.fatherName;
 
     let updateLeaseStartDate = existingTenant.leaseStartDate;
     if (hasOwn(updates, "leaseStartDate")) {
@@ -805,33 +1151,167 @@ const updateTenant = async (req, res) => {
       }
     }
 
+    // Build emergency contact JSON
+    let emergencyContactData = existingTenant.emergencyContact ? (typeof existingTenant.emergencyContact === 'string' ? JSON.parse(existingTenant.emergencyContact) : existingTenant.emergencyContact) : {};
+    if (hasOwn(updates, "emergencyContactName") || hasOwn(updates, "emergencyContactNumber") || hasOwn(updates, "emergencyContactRelation")) {
+      if (hasOwn(updates, "emergencyContactName")) emergencyContactData.name = updates.emergencyContactName || null;
+      if (hasOwn(updates, "emergencyContactNumber")) emergencyContactData.phone = updates.emergencyContactNumber || null;
+      if (hasOwn(updates, "emergencyContactRelation")) emergencyContactData.relationship = updates.emergencyContactRelation || null;
+      if (hasOwn(updates, "emergencyContactWhatsapp")) emergencyContactData.whatsappNumber = updates.emergencyContactWhatsapp || null;
+      if (hasOwn(updates, "emergencyContactRelationOther")) emergencyContactData.relationOther = updates.emergencyContactRelationOther || null;
+    } else if (hasOwn(updates, "emergencyContact")) {
+      emergencyContactData = parseJsonField(updates.emergencyContact) || emergencyContactData;
+    }
+
+    // Build nearest relative JSON
+    let nearestRelativeData = existingTenant.nearestRelative ? (typeof existingTenant.nearestRelative === 'string' ? JSON.parse(existingTenant.nearestRelative) : existingTenant.nearestRelative) : null;
+    if (hasOwn(updates, "nearestRelativeContact") || hasOwn(updates, "nearestRelativeWhatsapp") || hasOwn(updates, "nearestRelativeRelation")) {
+      nearestRelativeData = nearestRelativeData || {};
+      if (hasOwn(updates, "nearestRelativeContact")) nearestRelativeData.contactNumber = updates.nearestRelativeContact || null;
+      if (hasOwn(updates, "nearestRelativeWhatsapp")) nearestRelativeData.whatsappNumber = updates.nearestRelativeWhatsapp || null;
+      if (hasOwn(updates, "nearestRelativeRelation")) nearestRelativeData.relation = updates.nearestRelativeRelation || null;
+      if (hasOwn(updates, "nearestRelativeRelationOther")) nearestRelativeData.relationOther = updates.nearestRelativeRelationOther || null;
+    }
+
+    // Parse late fees percentage
+    let updateLateFeesPercentage = existingTenant.lateFeesPercentage;
+    if (hasOwn(updates, "lateFeesFine") && updates.lateFeesFine === 'Yes' && hasOwn(updates, "lateFeesPercentage")) {
+      if (updates.lateFeesPercentage === null || updates.lateFeesPercentage === "") {
+        updateLateFeesPercentage = null;
+      } else {
+        const parsed = parseFloat(updates.lateFeesPercentage);
+        if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
+          return errorResponse(res, "Invalid late fees percentage (must be between 0 and 100)", 400);
+        }
+        updateLateFeesPercentage = parsed;
+      }
+    } else if (hasOwn(updates, "lateFeesFine") && updates.lateFeesFine === 'No') {
+      updateLateFeesPercentage = null;
+    }
+
+    // Build professionDetail JSON based on professionType
+    let professionDetailData = existingTenant.professionDetail 
+      ? (typeof existingTenant.professionDetail === 'string' ? JSON.parse(existingTenant.professionDetail) : existingTenant.professionDetail)
+      : null;
+    
+    const updatedProfessionType = hasOwn(updates, "professionType") ? (updates.professionType || null) : existingTenant.professionType;
+    
+    if (updatedProfessionType) {
+      // If professionType is being updated or professionDetail fields are being updated, rebuild professionDetail
+      const hasProfessionUpdates = hasOwn(updates, "academicName") || hasOwn(updates, "academicAddress") || 
+        hasOwn(updates, "academicLocation") || hasOwn(updates, "studentCardNo") || 
+        hasOwn(updates, "jobTitle") || hasOwn(updates, "companyName") || hasOwn(updates, "jobAddress") ||
+        hasOwn(updates, "jobLocation") || hasOwn(updates, "jobIdNo") ||
+        hasOwn(updates, "businessName") || hasOwn(updates, "businessAddress") || hasOwn(updates, "businessLocation") ||
+        mergedAcademicAttachments || mergedJobAttachments || mergedBusinessAttachments;
+      
+      if (hasProfessionUpdates || hasOwn(updates, "professionType")) {
+        professionDetailData = {};
+        
+        if (updatedProfessionType === 'student') {
+          const existingDetail = existingTenant.professionDetail 
+            ? (typeof existingTenant.professionDetail === 'string' ? JSON.parse(existingTenant.professionDetail) : existingTenant.professionDetail)
+            : {};
+          if (hasOwn(updates, "academicName")) professionDetailData.academicName = updates.academicName || null;
+          else professionDetailData.academicName = existingDetail.academicName || null;
+          
+          if (hasOwn(updates, "academicAddress")) professionDetailData.academicAddress = updates.academicAddress || null;
+          else professionDetailData.academicAddress = existingDetail.academicAddress || null;
+          
+          if (hasOwn(updates, "academicLocation")) professionDetailData.academicLocation = updates.academicLocation || null;
+          else professionDetailData.academicLocation = existingDetail.academicLocation || null;
+          
+          if (hasOwn(updates, "studentCardNo")) professionDetailData.studentCardNo = updates.studentCardNo || null;
+          else professionDetailData.studentCardNo = existingDetail.studentCardNo || null;
+          
+          if (mergedAcademicAttachments) professionDetailData.academicAttachments = mergedAcademicAttachments;
+          else professionDetailData.academicAttachments = existingDetail.academicAttachments || null;
+        } else if (updatedProfessionType === 'job') {
+          const existingDetail = existingTenant.professionDetail 
+            ? (typeof existingTenant.professionDetail === 'string' ? JSON.parse(existingTenant.professionDetail) : existingTenant.professionDetail)
+            : {};
+          if (hasOwn(updates, "jobTitle")) professionDetailData.jobTitle = updates.jobTitle || null;
+          else professionDetailData.jobTitle = existingDetail.jobTitle || null;
+          
+          if (hasOwn(updates, "companyName")) professionDetailData.companyName = updates.companyName || null;
+          else professionDetailData.companyName = existingDetail.companyName || null;
+          
+          if (hasOwn(updates, "jobAddress")) professionDetailData.jobAddress = updates.jobAddress || null;
+          else professionDetailData.jobAddress = existingDetail.jobAddress || null;
+          
+          if (hasOwn(updates, "jobLocation")) professionDetailData.jobLocation = updates.jobLocation || null;
+          else professionDetailData.jobLocation = existingDetail.jobLocation || null;
+          
+          if (hasOwn(updates, "jobIdNo")) professionDetailData.jobIdNo = updates.jobIdNo || null;
+          else professionDetailData.jobIdNo = existingDetail.jobIdNo || null;
+          
+          if (mergedJobAttachments) professionDetailData.jobAttachments = mergedJobAttachments;
+          else professionDetailData.jobAttachments = existingDetail.jobAttachments || null;
+        } else if (updatedProfessionType === 'business') {
+          const existingDetail = existingTenant.professionDetail 
+            ? (typeof existingTenant.professionDetail === 'string' ? JSON.parse(existingTenant.professionDetail) : existingTenant.professionDetail)
+            : {};
+          if (hasOwn(updates, "businessName")) professionDetailData.businessName = updates.businessName || null;
+          else professionDetailData.businessName = existingDetail.businessName || null;
+          
+          if (hasOwn(updates, "businessAddress")) professionDetailData.businessAddress = updates.businessAddress || null;
+          else professionDetailData.businessAddress = existingDetail.businessAddress || null;
+          
+          if (hasOwn(updates, "businessLocation")) professionDetailData.businessLocation = updates.businessLocation || null;
+          else professionDetailData.businessLocation = existingDetail.businessLocation || null;
+          
+          if (mergedBusinessAttachments) professionDetailData.businessAttachments = mergedBusinessAttachments;
+          else professionDetailData.businessAttachments = existingDetail.businessAttachments || null;
+        }
+        
+        // Only set professionDetail if there's data
+        if (Object.keys(professionDetailData).length === 0) {
+          professionDetailData = null;
+        }
+      }
+    }
+
     // Update data
     const updateData = {
-      firstName: updatedFirstName,
-      lastName: updatedLastName,
-      name: `${updatedFirstName || ""} ${updatedLastName || ""}`.trim(),
-      email: updates.email || existingTenant.email,
-      phone: updates.phone || existingTenant.phone,
-      alternatePhone: updates.alternatePhone || existingTenant.alternatePhone,
-      gender: updates.gender || existingTenant.gender,
-      dateOfBirth: updates.dateOfBirth ? new Date(updates.dateOfBirth) : existingTenant.dateOfBirth,
-      cnicNumber: updates.cnicNumber || existingTenant.cnicNumber,
+      fullName: updatedFullName,
+      fatherName: updatedFatherName,
+      name: updatedFullName || existingTenant.name,
+      email: hasOwn(updates, "email") ? (updates.email || null) : existingTenant.email,
+      phone: hasOwn(updates, "phone") ? updates.phone : existingTenant.phone,
+      alternatePhone: hasOwn(updates, "alternatePhone") ? (updates.alternatePhone || null) : existingTenant.alternatePhone,
+      whatsappNumber: hasOwn(updates, "whatsappNumber") ? (updates.whatsappNumber || null) : existingTenant.whatsappNumber,
+      gender: hasOwn(updates, "gender") ? (updates.gender || null) : existingTenant.gender,
+      genderOther: hasOwn(updates, "gender") && updates.gender === 'other' && hasOwn(updates, "genderOther")
+        ? (updates.genderOther || null)
+        : (hasOwn(updates, "gender") && updates.gender !== 'other' ? null : existingTenant.genderOther),
+      dateOfBirth: hasOwn(updates, "dateOfBirth") ? (updates.dateOfBirth ? new Date(updates.dateOfBirth) : null) : existingTenant.dateOfBirth,
+      cnicNumber: hasOwn(updates, "cnicNumber") ? (updates.cnicNumber || null) : existingTenant.cnicNumber,
       address: hasOwn(updates, "address") ? parseJsonField(updates.address) : existingTenant.address,
       permanentAddress: hasOwn(updates, "permanentAddress") ? parseJsonField(updates.permanentAddress) : existingTenant.permanentAddress,
-      emergencyContact: hasOwn(updates, "emergencyContact") ? parseJsonField(updates.emergencyContact) : existingTenant.emergencyContact,
-      occupation: updates.occupation || existingTenant.occupation,
-      companyName: updates.companyName || existingTenant.companyName,
-      designation: updates.designation || existingTenant.designation,
-      monthlyIncome: updateMonthlyIncome,
+      attachments: mergedAttachments,
+      emergencyContact: Object.keys(emergencyContactData).length > 0 ? emergencyContactData : null,
+      emergencyContactWhatsapp: hasOwn(updates, "emergencyContactWhatsapp") ? (updates.emergencyContactWhatsapp || null) : existingTenant.emergencyContactWhatsapp,
+      emergencyContactRelationOther: hasOwn(updates, "emergencyContactRelationOther") ? (updates.emergencyContactRelationOther || null) : existingTenant.emergencyContactRelationOther,
+      anyDisease: hasOwn(updates, "anyDisease") ? (updates.anyDisease || null) : existingTenant.anyDisease,
+      bloodGroup: hasOwn(updates, "bloodGroup") ? (updates.bloodGroup || null) : existingTenant.bloodGroup,
+      nearestRelative: nearestRelativeData,
+      professionType: updatedProfessionType,
+      professionDetail: professionDetailData,
+      professionDescription: hasOwn(updates, "professionDescription") ? (updates.professionDescription || null) : existingTenant.professionDescription,
       documents,
       profilePhoto: profilePhoto ?? existingTenant.profilePhoto,
-      notes: updates.notes || existingTenant.notes,
-      status: updates.status || existingTenant.status,
-      rating: updates.rating ? parseInt(updates.rating) : existingTenant.rating,
+      notes: hasOwn(updates, "notes") ? (updates.notes || null) : existingTenant.notes,
+      status: hasOwn(updates, "status") ? updates.status : existingTenant.status,
+      rating: hasOwn(updates, "rating") ? (updates.rating ? parseInt(updates.rating) : existingTenant.rating) : existingTenant.rating,
       leaseStartDate: updateLeaseStartDate,
       leaseEndDate: updateLeaseEndDate,
       monthlyRent: updateMonthlyRent,
-      securityDeposit: updateSecurityDeposit
+      securityDeposit: updateSecurityDeposit,
+      lateFeesFine: hasOwn(updates, "lateFeesFine") ? (updates.lateFeesFine || null) : existingTenant.lateFeesFine,
+      lateFeesPercentage: updateLateFeesPercentage,
+      rentalDocument: mergedRentalDocument,
+      securityDepositFile: mergedSecurityDepositFile,
+      advancedRentReceivedFile: mergedAdvancedRentReceivedFile,
     };
 
     const tenant = await prisma.tenant.update({
